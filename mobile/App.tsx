@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react';
 import {
   Alert,
   Platform,
@@ -64,6 +70,26 @@ export default function App() {
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [message, setMessage] = useState('Initializing audio…');
 
+  const preparePromiseRef = useRef<Promise<void> | null>(null);
+
+  const ensureRecorderPrepared = useCallback(async () => {
+    const status = recorder.getStatus();
+
+    if (status.canRecord) {
+      return;
+    }
+
+    if (!preparePromiseRef.current) {
+      preparePromiseRef.current = recorder
+        .prepareToRecordAsync()
+        .finally(() => {
+          preparePromiseRef.current = null;
+        });
+    }
+
+    await preparePromiseRef.current;
+  }, [recorder]);
+
   const isBusy =
     recorderState.isRecording || processingState === 'uploading';
 
@@ -81,7 +107,7 @@ export default function App() {
   const refreshInputs = useCallback(async () => {
     try {
       setMessage('Enumerating recording inputs…');
-      await recorder.prepareToRecordAsync();
+      await ensureRecorderPrepared();
 
       const availableInputs = await recorder.getAvailableInputs();
       const activeInput = await recorder.getCurrentInput();
@@ -114,7 +140,7 @@ export default function App() {
         error instanceof Error ? error.message : 'Unable to enumerate inputs.';
       setMessage(details);
     }
-  }, [recorder]);
+  }, [ensureRecorderPrepared, recorder]);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,7 +181,7 @@ export default function App() {
 
   async function selectInput(input: RecordingInput) {
     try {
-      await recorder.prepareToRecordAsync();
+      await ensureRecorderPrepared();
       await recorder.setInput(input.uid);
       const selected = await recorder.getCurrentInput();
 
@@ -178,7 +204,7 @@ export default function App() {
       setProcessingState('recording');
       setMessage('Preparing recorder…');
 
-      await recorder.prepareToRecordAsync();
+      await ensureRecorderPrepared();
 
       if (selectedInputUid) {
         await recorder.setInput(selectedInputUid);

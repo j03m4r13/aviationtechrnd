@@ -25,7 +25,7 @@ export const SPEECH_RECORDING_OPTIONS: RecordingOptions = {
     ...RecordingPresets.HIGH_QUALITY.android,
     outputFormat: 'mpeg4',
     audioEncoder: 'aac',
-    audioSource: 'voice_communication'
+    audioSource: 'mic'
   },
   ios: {
     ...RecordingPresets.HIGH_QUALITY.ios,

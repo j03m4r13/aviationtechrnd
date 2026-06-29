@@ -1,3 +1,6 @@
+import { fetch } from 'expo/fetch';
+import { File } from 'expo-file-system';
+
 import type { ProcessingResult } from '../types/audio';
 
 const API_BASE_URL =
@@ -20,19 +23,17 @@ export async function processAudio({
   sourceLanguage,
   targetLanguage
 }: ProcessAudioArguments): Promise<ProcessingResult> {
-  const filename = uri.split('/').pop() || `recording-${Date.now()}.m4a`;
+  const audioFile = new File(uri);
+
+  if (!audioFile.exists || audioFile.size === 0) {
+    throw new Error('The recorded audio file is missing or empty.');
+  }
 
   const form = new FormData();
+
   form.append('sourceLanguage', sourceLanguage);
   form.append('targetLanguage', targetLanguage);
-  form.append(
-    'audio',
-    {
-      uri,
-      name: filename.endsWith('.m4a') ? filename : `${filename}.m4a`,
-      type: 'audio/mp4'
-    } as unknown as Blob
-  );
+  form.append('audio', audioFile);
 
   const response = await fetch(`${API_BASE_URL}/v1/audio/process`, {
     method: 'POST',
@@ -46,7 +47,7 @@ export async function processAudio({
       const body = (await response.json()) as ErrorResponse;
       details = body.message || body.error || details;
     } catch {
-      // Preserve the HTTP status message when the body is not JSON.
+      // Keep the HTTP status if the response is not JSON.
     }
 
     throw new Error(details);
