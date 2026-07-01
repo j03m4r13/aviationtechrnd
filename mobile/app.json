@@ -2,7 +2,7 @@
   "expo": {
     "name": "Aviation Voice MVP",
     "slug": "aviation-voice-mvp",
-    "version": "0.1.0",
+    "version": "0.3.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "android": {
@@ -28,7 +28,8 @@
             "usesCleartextTraffic": true
           }
         }
-      ]
+      ],
+      "expo-secure-store"
     ]
   }
 }

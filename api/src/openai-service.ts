@@ -1,4 +1,5 @@
 import OpenAI, { toFile } from 'openai';
+
 import { languageName } from './languages.js';
 
 const client = new OpenAI({
@@ -7,14 +8,24 @@ const client = new OpenAI({
 
 const transcriptionModel =
   process.env.OPENAI_TRANSCRIPTION_MODEL ?? 'gpt-4o-mini-transcribe';
-
 const translationModel =
   process.env.OPENAI_TRANSLATION_MODEL ?? 'gpt-5.4-mini';
+
+const transcriptionCostPerMinute = Number(
+  process.env.TRANSCRIPTION_COST_PER_MINUTE_USD ?? '0.003'
+);
+const translationInputCostPerMillion = Number(
+  process.env.TRANSLATION_INPUT_COST_PER_MILLION_USD ?? '0.75'
+);
+const translationOutputCostPerMillion = Number(
+  process.env.TRANSLATION_OUTPUT_COST_PER_MILLION_USD ?? '4.50'
+);
 
 type ProcessAudioArguments = {
   audio: Buffer;
   filename: string;
   mimeType: string;
+  durationMs: number;
   sourceLanguage: string;
   targetLanguage: string;
 };
@@ -23,6 +34,7 @@ export async function transcribeAndTranslate({
   audio,
   filename,
   mimeType,
+  durationMs,
   sourceLanguage,
   targetLanguage
 }: ProcessAudioArguments) {
@@ -38,7 +50,6 @@ export async function transcribeAndTranslate({
   });
 
   const transcript = transcription.text.trim();
-
   if (!transcript) {
     throw new Error('The transcription service returned an empty transcript.');
   }
@@ -62,6 +73,13 @@ export async function transcribeAndTranslate({
     ].join('\n')
   });
 
+  const inputTokens = translation.usage?.input_tokens ?? null;
+  const outputTokens = translation.usage?.output_tokens ?? null;
+  const estimatedCostUsd =
+    (durationMs / 60_000) * transcriptionCostPerMinute +
+    ((inputTokens ?? 0) / 1_000_000) * translationInputCostPerMillion +
+    ((outputTokens ?? 0) / 1_000_000) * translationOutputCostPerMillion;
+
   return {
     transcript,
     translation: translation.output_text.trim(),
@@ -70,6 +88,11 @@ export async function transcribeAndTranslate({
     models: {
       transcription: transcriptionModel,
       translation: translationModel
+    },
+    usage: {
+      inputTokens,
+      outputTokens,
+      estimatedCostUsd: Number(estimatedCostUsd.toFixed(6))
     }
   };
 }
