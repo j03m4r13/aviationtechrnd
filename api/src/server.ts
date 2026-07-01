@@ -3,8 +3,8 @@ import 'dotenv/config';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyReply } from 'fastify';
-import { parseBuffer } from 'music-metadata';
 
+import { determineAudioDurationMs } from './audio-duration.js';
 import { authenticateRequest } from './auth.js';
 import {
   completeCloudProcessing,
@@ -198,23 +198,29 @@ app.post('/v1/audio/process', async (request, reply) => {
       });
     }
 
-    const metadata = await parseBuffer(
+    const durationResult = await determineAudioDurationMs({
       audio,
-      { mimeType, size: audio.length },
-      { duration: true, skipCovers: true }
-    );
-    const parsedDurationSeconds = metadata.format.duration;
-    if (!parsedDurationSeconds || !Number.isFinite(parsedDurationSeconds)) {
-      return reply.code(422).send({
-        error: 'audio_duration_unavailable',
-        message: 'The server could not determine the audio duration.'
-      });
-    }
+      filename,
+      mimeType,
+      clientDurationMs: durationMs,
+      maxDurationMs: MAX_DURATION_MS
+    });
+    const authoritativeDurationMs = durationResult.durationMs;
 
-    const authoritativeDurationMs = Math.max(
-      1,
-      Math.round(parsedDurationSeconds * 1000)
-    );
+    if (durationResult.source !== 'music-metadata') {
+      request.log.warn(
+        {
+          durationSource: durationResult.source,
+          authoritativeDurationMs,
+          clientDurationMs: durationMs,
+          filename,
+          mimeType,
+          audioBytes: audio.length,
+          diagnostics: durationResult.diagnostics
+        },
+        'Used fallback audio-duration detection'
+      );
+    }
     if (authoritativeDurationMs > MAX_DURATION_MS) {
       return reply.code(413).send({
         error: 'audio_too_long',
