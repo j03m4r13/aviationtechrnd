@@ -38,6 +38,17 @@ class AviationCallsignMonitorModule : Module() {
         }
 
         override fun onAlert(payload: Map<String, Any?>) {
+          val source = payload["source"] as? String
+          val confirmed =
+            payload["confirmed"] as? Boolean == true ||
+              source == "WHISPER" ||
+              source == "BOTH"
+          val shouldPlay = confirmed || payload["notify"] as? Boolean == true
+
+          if (shouldPlay) {
+            CallsignAlertTone.play(confirmed)
+          }
+
           sendEvent("onCallsignAlert", payload)
         }
 
