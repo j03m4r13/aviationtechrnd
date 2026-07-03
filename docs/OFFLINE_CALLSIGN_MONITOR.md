@@ -5,7 +5,8 @@ The mobile app now contains an Android-only callsign alert tool designed first f
 ## Runtime design
 
 - Vosk continuously produces low-latency partial and final recognition.
-- whisper.cpp `small.en-q5_1` processes each completed speech transmission.
+- whisper.cpp processes each completed speech transmission locally.
+- The current Android validation profile uses `base.en-q5_1`, four CPU threads, and a six-second inference window.
 - A deterministic matcher normalizes ICAO phonetics and aviation number pronunciations.
 - Callsign alerts use vibration and a high-visibility visual card.
 - Audio remains in memory and is not uploaded or saved by the monitor.
@@ -25,12 +26,14 @@ npx expo run:android
 
 The setup command downloads pinned whisper.cpp source, the Vosk model, and the quantized Whisper model. Internet is needed for this development/build setup only. Recognition in the installed app is offline.
 
-## Default models
+## Default validation models
 
 - Vosk: `vosk-model-small-en-us-0.15`
-- Whisper: `small.en-q5_1`
+- Whisper: `base.en-q5_1`
 - ABI: `arm64-v8a`
 - Audio: 16 kHz mono PCM
+
+After native inference is proven stable and timing is measured, a larger Whisper model can be tested for improved accuracy.
 
 ## Input routing
 
@@ -45,6 +48,16 @@ The callsign screen can request the existing Bluetooth communication route befor
 5. Start monitoring and speak recorded ATC samples near the selected input.
 6. Confirm Vosk partial results arrive quickly and Whisper results follow after each transmission.
 7. Measure missed calls and false alerts using cockpit-noise recordings before any operational trial.
+
+## Native diagnostics
+
+Use this command while testing:
+
+```bash
+adb logcat -s AviationWhisper:I
+```
+
+Expected messages include model loading, inference start, inference completion time, and returned text length.
 
 ## Safety
 
