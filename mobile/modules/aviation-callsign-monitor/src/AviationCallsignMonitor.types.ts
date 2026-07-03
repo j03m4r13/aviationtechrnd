@@ -1,5 +1,13 @@
 export type CallsignMonitorSource = 'VOSK' | 'WHISPER' | 'BOTH';
 
+export type WhisperRuntimeState =
+  | 'idle'
+  | 'capturing'
+  | 'queued'
+  | 'completed'
+  | 'empty'
+  | 'failed';
+
 export type CallsignMonitorConfig = {
   callsign: string;
   aliases?: string[];
@@ -13,6 +21,12 @@ export type CallsignMonitorStatus = {
   callsign: string;
   whisperModel: string | null;
   voskModel: string | null;
+  whisperState?: WhisperRuntimeState;
+  whisperQueuedCount?: number;
+  whisperCompletedCount?: number;
+  whisperEmptyCount?: number;
+  lastWhisperSegmentMs?: number;
+  lastWhisperQueueReason?: string | null;
 };
 
 export type CallsignTranscriptEvent = {

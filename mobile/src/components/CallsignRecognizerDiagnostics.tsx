@@ -18,21 +18,25 @@ const EMPTY_STATUS: CallsignMonitorStatus = {
   monitoring: false,
   callsign: '',
   whisperModel: null,
-  voskModel: null
+  voskModel: null,
+  whisperState: 'idle',
+  whisperQueuedCount: 0,
+  whisperCompletedCount: 0,
+  whisperEmptyCount: 0,
+  lastWhisperSegmentMs: 0,
+  lastWhisperQueueReason: null
 };
 
 export function CallsignRecognizerDiagnostics() {
-  const [status, setStatus] = useState(EMPTY_STATUS);
+  const [status, setStatus] = useState<CallsignMonitorStatus>(EMPTY_STATUS);
   const [lastVosk, setLastVosk] = useState<CallsignTranscriptEvent | null>(null);
   const [lastWhisper, setLastWhisper] = useState<CallsignTranscriptEvent | null>(null);
-  const [whisperRuns, setWhisperRuns] = useState(0);
   const [lastError, setLastError] = useState<CallsignErrorEvent | null>(null);
 
   useEffect(() => {
     const transcripts = addTranscriptListener((event) => {
       if (event.source === 'WHISPER') {
         setLastWhisper(event);
-        setWhisperRuns((count) => count + 1);
       } else {
         setLastVosk(event);
       }
@@ -52,27 +56,30 @@ export function CallsignRecognizerDiagnostics() {
     <View style={styles.card}>
       <Text style={styles.title}>Recognizer diagnostics</Text>
       <Text style={styles.help}>
-        Speak for at least one second, then stay silent for one to two seconds so Whisper receives a completed segment.
+        Speak for at least one second, then stay silent. The counters below show whether audio reached Whisper even when its transcription is empty.
       </Text>
 
+      <Text style={styles.engine}>Vosk model: {status.voskModel ?? 'not loaded'}</Text>
+      <Text style={styles.engine}>Whisper model: {status.whisperModel ?? 'not loaded'}</Text>
+      <Text style={styles.engine}>Whisper state: {status.whisperState ?? 'idle'}</Text>
+      <Text style={styles.engine}>Segments queued: {status.whisperQueuedCount ?? 0}</Text>
+      <Text style={styles.engine}>Transcriptions completed: {status.whisperCompletedCount ?? 0}</Text>
+      <Text style={styles.engine}>Empty Whisper results: {status.whisperEmptyCount ?? 0}</Text>
       <Text style={styles.engine}>
-        Vosk model: {status.voskModel ?? 'not loaded'}
+        Last segment: {status.lastWhisperSegmentMs ?? 0} ms
+        {status.lastWhisperQueueReason ? ` · ${status.lastWhisperQueueReason}` : ''}
       </Text>
-      <Text style={styles.engine}>
-        Whisper model: {status.whisperModel ?? 'not loaded'}
-      </Text>
-      <Text style={styles.engine}>Whisper results received: {whisperRuns}</Text>
 
       <View style={styles.output}>
         <Text style={styles.label}>LATEST VOSK</Text>
-        <Text style={styles.value}>
+        <Text selectable style={styles.value}>
           {lastVosk ? `${lastVosk.source}: ${lastVosk.transcript}` : 'No Vosk result yet.'}
         </Text>
       </View>
 
       <View style={styles.output}>
         <Text style={styles.label}>LATEST WHISPER</Text>
-        <Text style={styles.value}>
+        <Text selectable style={styles.value}>
           {lastWhisper
             ? `WHISPER: ${lastWhisper.transcript}`
             : status.whisperModel

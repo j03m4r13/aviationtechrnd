@@ -29,6 +29,8 @@ internal class CallsignMonitorEngine(
   private val maximumSegmentSamples = sampleRate * 12
   private val preRoll = ShortRingBuffer(sampleRate / 2)
   private val segment = ShortAccumulator(sampleRate * 4)
+  private val voskPreRoll = ShortRingBuffer(sampleRate / 2)
+  private val voskSegment = ShortAccumulator(sampleRate * 4)
   private val vad = AdaptiveVad()
   private val running = AtomicBoolean(false)
   private val whisper = WhisperEngine()
@@ -41,7 +43,15 @@ internal class CallsignMonitorEngine(
   @Volatile private var matcher: CallsignMatcher? = null
   @Volatile private var aliases: List<String> = emptyList()
   @Volatile private var voskModelName: String? = null
+  @Volatile private var voskCapturing = false
+  @Volatile private var whisperState = "idle"
+  @Volatile private var whisperQueuedCount = 0
+  @Volatile private var whisperCompletedCount = 0
+  @Volatile private var whisperEmptyCount = 0
+  @Volatile private var lastWhisperSegmentMs = 0
+  @Volatile private var lastWhisperQueueReason: String? = null
 
+  private var lastWhisperQueuedAt = 0L
   private var lastVoskMatchAt = 0L
   private var lastVoskScore = 0.0
   private var lastVoskTranscript = ""
@@ -76,6 +86,7 @@ internal class CallsignMonitorEngine(
     whisper.load(whisperFile)
 
     initialized = true
+    whisperState = "idle"
     listener.onStatus(status() + ("message" to "Offline callsign monitor ready"))
   }
 
@@ -177,6 +188,9 @@ internal class CallsignMonitorEngine(
     vad.reset()
     preRoll.clear()
     segment.clear()
+    voskPreRoll.clear()
+    voskSegment.clear()
+    voskCapturing = false
 
     if (wasRunning || recorder != null) {
       listener.onStatus(status() + ("message" to "Monitoring stopped"))
@@ -196,6 +210,7 @@ internal class CallsignMonitorEngine(
         if (count <= 0) continue
 
         processVosk(frame, count)
+
         when (vad.process(frame, count)) {
           VadEvent.SILENCE -> preRoll.append(frame, count)
           VadEvent.START -> {
@@ -203,14 +218,17 @@ internal class CallsignMonitorEngine(
             segment.append(preRoll.snapshot())
             segment.append(frame, count)
             preRoll.clear()
+            whisperState = "capturing"
+            emitStatus("Energy detector started a speech segment")
           }
           VadEvent.SPEECH -> {
             if (segment.size > 0) segment.append(frame, count)
           }
-          VadEvent.END -> finalizeSegment()
+          VadEvent.END -> finalizeEnergySegment()
         }
 
-        if (segment.size >= maximumSegmentSamples) finalizeSegment()
+        if (segment.size >= maximumSegmentSamples) finalizeEnergySegment()
+        if (voskSegment.size >= maximumSegmentSamples) finalizeVoskSegment()
       }
     } catch (error: Throwable) {
       if (running.get()) {
@@ -238,6 +256,12 @@ internal class CallsignMonitorEngine(
   }
 
   private fun processVosk(frame: ShortArray, count: Int) {
+    if (voskCapturing) {
+      voskSegment.append(frame, count)
+    } else {
+      voskPreRoll.append(frame, count)
+    }
+
     val recognizer = voskRecognizer ?: return
     val finalized = recognizer.acceptWaveForm(frame, count)
     val json = if (finalized) recognizer.result else recognizer.partialResult
@@ -245,15 +269,33 @@ internal class CallsignMonitorEngine(
     val text = runCatching {
       JSONObject(json).optString(key)
     }.getOrDefault("").trim()
-    if (text.isBlank()) return
 
-    evaluateTranscript(
-      if (finalized) "VOSK_FINAL" else "VOSK_PARTIAL",
-      text
-    )
+    if (!finalized && text.isNotBlank() && !voskCapturing) {
+      voskCapturing = true
+      voskSegment.clear()
+      voskSegment.append(voskPreRoll.snapshot())
+      voskPreRoll.clear()
+      whisperState = "capturing"
+      emitStatus("Vosk detected the start of an utterance")
+    }
+
+    if (text.isNotBlank()) {
+      evaluateTranscript(
+        if (finalized) "VOSK_FINAL" else "VOSK_PARTIAL",
+        text
+      )
+    }
+
+    if (finalized) {
+      if (voskCapturing) {
+        finalizeVoskSegment()
+      } else {
+        voskPreRoll.clear()
+      }
+    }
   }
 
-  private fun finalizeSegment() {
+  private fun finalizeEnergySegment() {
     if (segment.size < sampleRate / 3) {
       segment.clear()
       return
@@ -262,17 +304,54 @@ internal class CallsignMonitorEngine(
     val audio = segment.toArray()
     segment.clear()
     preRoll.clear()
+    queueWhisper(audio, "energy-vad")
+  }
+
+  private fun finalizeVoskSegment() {
+    if (voskSegment.size >= sampleRate / 3) {
+      queueWhisper(voskSegment.toArray(), "vosk-endpoint")
+    }
+    voskSegment.clear()
+    voskPreRoll.clear()
+    voskCapturing = false
+  }
+
+  private fun queueWhisper(audio: ShortArray, reason: String) {
+    val now = System.currentTimeMillis()
+    if (now - lastWhisperQueuedAt < 1_200) return
+
+    lastWhisperQueuedAt = now
+    whisperQueuedCount++
+    lastWhisperSegmentMs = audio.size * 1_000 / sampleRate
+    lastWhisperQueueReason = reason
+    whisperState = "queued"
+    emitStatus("Whisper queued a ${lastWhisperSegmentMs} ms segment via $reason")
 
     whisper.transcribeAsync(audio) { result ->
       result.onSuccess { text ->
-        if (text.isNotBlank()) evaluateTranscript("WHISPER", text)
+        if (text.isBlank()) {
+          whisperEmptyCount++
+          whisperState = "empty"
+          emitStatus("Whisper completed but returned no text")
+        } else {
+          whisperCompletedCount++
+          whisperState = "completed"
+          evaluateTranscript("WHISPER", text)
+          emitStatus("Whisper transcription completed")
+        }
       }.onFailure { error ->
+        whisperState = "failed"
         listener.onError(
           "WHISPER_FAILED",
           error.message ?: error.javaClass.simpleName
         )
+        emitStatus("Whisper transcription failed")
       }
     }
+  }
+
+  private fun emitStatus(message: String) {
+    listener.onStatus(status() + ("message" to message))
   }
 
   @Synchronized
@@ -353,7 +432,13 @@ internal class CallsignMonitorEngine(
     "monitoring" to running.get(),
     "callsign" to (matcher?.currentTarget() ?: ""),
     "whisperModel" to whisper.loadedModelName(),
-    "voskModel" to voskModelName
+    "voskModel" to voskModelName,
+    "whisperState" to whisperState,
+    "whisperQueuedCount" to whisperQueuedCount,
+    "whisperCompletedCount" to whisperCompletedCount,
+    "whisperEmptyCount" to whisperEmptyCount,
+    "lastWhisperSegmentMs" to lastWhisperSegmentMs,
+    "lastWhisperQueueReason" to lastWhisperQueueReason
   )
 
   override fun close() {
@@ -372,7 +457,13 @@ internal class CallsignMonitorEngine(
       "monitoring" to false,
       "callsign" to "",
       "whisperModel" to null,
-      "voskModel" to null
+      "voskModel" to null,
+      "whisperState" to "idle",
+      "whisperQueuedCount" to 0,
+      "whisperCompletedCount" to 0,
+      "whisperEmptyCount" to 0,
+      "lastWhisperSegmentMs" to 0,
+      "lastWhisperQueueReason" to null
     )
   }
 }
