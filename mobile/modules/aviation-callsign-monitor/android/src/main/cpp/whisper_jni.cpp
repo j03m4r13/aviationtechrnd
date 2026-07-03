@@ -67,7 +67,10 @@ Java_expo_modules_aviationcallsign_WhisperNative_nativeTranscribe(
   params.language = "en";
   params.translate = false;
   params.no_context = true;
+  params.no_timestamps = true;
   params.single_segment = true;
+  params.max_tokens = 32;
+  params.greedy.best_of = 1;
   params.print_progress = false;
   params.print_realtime = false;
   params.print_timestamps = false;
