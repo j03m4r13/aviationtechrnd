@@ -1,0 +1,16 @@
+{
+  "name": "aviation-callsign-monitor",
+  "version": "0.1.0",
+  "description": "Offline Vosk plus whisper.cpp callsign monitor for the Aviation Expo app",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true,
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  },
+  "dependencies": {
+    "expo-modules-core": "*"
+  }
+}
