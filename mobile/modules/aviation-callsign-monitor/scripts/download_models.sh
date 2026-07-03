@@ -8,7 +8,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 VOSK_MODEL="vosk-model-small-en-us-0.15"
-WHISPER_MODEL="small.en-q5_1"
+WHISPER_MODEL="base.en-q5_1"
 
 mkdir -p "$MODEL_DIR"
 
@@ -23,12 +23,12 @@ else
 fi
 
 if [[ ! -f "$MODEL_DIR/ggml-$WHISPER_MODEL.bin" ]]; then
-  echo "Downloading whisper.cpp model..."
+  echo "Downloading whisper.cpp validation model..."
   curl -L --fail --retry 4 \
     -o "$MODEL_DIR/ggml-$WHISPER_MODEL.bin" \
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$WHISPER_MODEL.bin"
 else
-  echo "Whisper model already exists."
+  echo "Whisper validation model already exists."
 fi
 
 echo "Models installed in $MODEL_DIR"
