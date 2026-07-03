@@ -27,6 +27,7 @@ internal class CallsignMonitorEngine(
   private val sampleRate = 16_000
   private val frameSamples = 320
   private val maximumSegmentSamples = sampleRate * 12
+  private val minimumFastWhisperSamples = sampleRate * 3 / 4
   private val preRoll = ShortRingBuffer(sampleRate / 2)
   private val segment = ShortAccumulator(sampleRate * 4)
   private val voskPreRoll = ShortRingBuffer(sampleRate / 2)
@@ -51,6 +52,7 @@ internal class CallsignMonitorEngine(
   @Volatile private var lastWhisperSegmentMs = 0
   @Volatile private var lastWhisperQueueReason: String? = null
 
+  private var fastWhisperQueuedForUtterance = false
   private var lastWhisperQueuedAt = 0L
   private var lastVoskMatchAt = 0L
   private var lastVoskScore = 0.0
@@ -113,7 +115,7 @@ internal class CallsignMonitorEngine(
     ).apply {
       setWords(true)
       setPartialWords(true)
-      setMaxAlternatives(2)
+      setMaxAlternatives(3)
     }
   }
 
@@ -191,6 +193,7 @@ internal class CallsignMonitorEngine(
     voskPreRoll.clear()
     voskSegment.clear()
     voskCapturing = false
+    fastWhisperQueuedForUtterance = false
 
     if (wasRunning || recorder != null) {
       listener.onStatus(status() + ("message" to "Monitoring stopped"))
@@ -214,6 +217,9 @@ internal class CallsignMonitorEngine(
         when (vad.process(frame, count)) {
           VadEvent.SILENCE -> preRoll.append(frame, count)
           VadEvent.START -> {
+            if (!voskCapturing) {
+              fastWhisperQueuedForUtterance = false
+            }
             segment.clear()
             segment.append(preRoll.snapshot())
             segment.append(frame, count)
@@ -265,13 +271,17 @@ internal class CallsignMonitorEngine(
     val recognizer = voskRecognizer ?: return
     val finalized = recognizer.acceptWaveForm(frame, count)
     val json = if (finalized) recognizer.result else recognizer.partialResult
-    val key = if (finalized) "text" else "partial"
-    val text = runCatching {
-      JSONObject(json).optString(key)
-    }.getOrDefault("").trim()
+    val candidates = extractVoskCandidates(json, finalized)
+    val currentMatcher = matcher
+    val text = if (currentMatcher == null) {
+      candidates.firstOrNull().orEmpty()
+    } else {
+      candidates.maxByOrNull { currentMatcher.score(it).score }.orEmpty()
+    }
 
     if (!finalized && text.isNotBlank() && !voskCapturing) {
       voskCapturing = true
+      fastWhisperQueuedForUtterance = false
       voskSegment.clear()
       voskSegment.append(voskPreRoll.snapshot())
       voskPreRoll.clear()
@@ -295,6 +305,30 @@ internal class CallsignMonitorEngine(
     }
   }
 
+  private fun extractVoskCandidates(json: String, finalized: Boolean): List<String> =
+    runCatching {
+      val payload = JSONObject(json)
+      val candidates = linkedSetOf<String>()
+      val primaryKey = if (finalized) "text" else "partial"
+      payload.optString(primaryKey).trim().takeIf(String::isNotBlank)?.let(candidates::add)
+
+      if (finalized) {
+        val alternatives = payload.optJSONArray("alternatives")
+        if (alternatives != null) {
+          for (index in 0 until alternatives.length()) {
+            alternatives
+              .optJSONObject(index)
+              ?.optString("text")
+              ?.trim()
+              ?.takeIf(String::isNotBlank)
+              ?.let(candidates::add)
+          }
+        }
+      }
+
+      candidates.toList()
+    }.getOrDefault(emptyList())
+
   private fun finalizeEnergySegment() {
     if (segment.size < sampleRate / 3) {
       segment.clear()
@@ -304,11 +338,16 @@ internal class CallsignMonitorEngine(
     val audio = segment.toArray()
     segment.clear()
     preRoll.clear()
-    queueWhisper(audio, "energy-vad")
+    if (!fastWhisperQueuedForUtterance) {
+      queueWhisper(audio, "energy-vad")
+    }
   }
 
   private fun finalizeVoskSegment() {
-    if (voskSegment.size >= sampleRate / 3) {
+    if (
+      !fastWhisperQueuedForUtterance &&
+        voskSegment.size >= sampleRate / 3
+    ) {
       queueWhisper(voskSegment.toArray(), "vosk-endpoint")
     }
     voskSegment.clear()
@@ -354,6 +393,12 @@ internal class CallsignMonitorEngine(
     listener.onStatus(status() + ("message" to message))
   }
 
+  private fun voskPossibleThreshold(match: MatchResult): Double =
+    if (match.matchedTarget.length >= 5) 0.80 else 0.86
+
+  private fun whisperThreshold(match: MatchResult): Double =
+    if (match.matchedTarget.length >= 5) 0.80 else 0.86
+
   @Synchronized
   private fun evaluateTranscript(source: String, transcript: String) {
     val match = matcher?.score(transcript) ?: return
@@ -371,23 +416,35 @@ internal class CallsignMonitorEngine(
 
     if (
       source.startsWith("VOSK") &&
-        match.score >= 0.90 &&
-        match.normalizedTranscript.length >= 4
+        match.matchedTarget.length >= 4 &&
+        match.normalizedTranscript.length >= 4 &&
+        match.score >= voskPossibleThreshold(match)
     ) {
       lastVoskMatchAt = now
       lastVoskScore = match.score
       lastVoskTranscript = transcript
       emitAlert("VOSK", transcript, match, confirmed = false, now = now)
+
+      if (
+        !fastWhisperQueuedForUtterance &&
+          voskCapturing &&
+          voskSegment.size >= minimumFastWhisperSamples &&
+          match.score >= 0.86
+      ) {
+        fastWhisperQueuedForUtterance = true
+        queueWhisper(voskSegment.toArray(), "vosk-match-fast")
+      }
       return
     }
 
     if (
       source == "WHISPER" &&
-        match.score >= 0.84 &&
-        match.normalizedTranscript.length >= 4
+        match.matchedTarget.length >= 4 &&
+        match.normalizedTranscript.length >= 4 &&
+        match.score >= whisperThreshold(match)
     ) {
       val corroborated =
-        now - lastVoskMatchAt <= 5_000 && lastVoskScore >= 0.75
+        now - lastVoskMatchAt <= 8_000 && lastVoskScore >= 0.75
       emitAlert(
         source = if (corroborated) "BOTH" else "WHISPER",
         transcript =
