@@ -19,6 +19,10 @@ type NativeCallsignModule = {
   startMonitoring(): Promise<CallsignMonitorStatus>;
   stopMonitoring(): Promise<CallsignMonitorStatus>;
   setCallsign(callsign: string, aliases: string[]): Promise<CallsignMonitorStatus>;
+  testAlert(confirmed: boolean): Promise<{
+    success: boolean;
+    confirmed: boolean;
+  }>;
   getStatus(): Promise<CallsignMonitorStatus>;
   addListener(
     eventName: 'onCallsignAlert',
@@ -67,6 +71,8 @@ export const stopMonitoring = () => NativeModule.stopMonitoring();
 export const getStatus = () => NativeModule.getStatus();
 export const setCallsign = (callsign: string, aliases: string[] = []) =>
   NativeModule.setCallsign(callsign, aliases);
+export const testAlert = (confirmed: boolean) =>
+  NativeModule.testAlert(confirmed);
 
 export const addCallsignAlertListener = (
   listener: (event: CallsignAlertEvent) => void
@@ -90,6 +96,7 @@ export default {
   stopMonitoring,
   getStatus,
   setCallsign,
+  testAlert,
   addCallsignAlertListener,
   addTranscriptListener,
   addStatusListener,
