@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
+import { CallsignAlertTestPanel } from './components/CallsignAlertTestPanel';
 import { CallsignMonitorPanel } from './components/CallsignMonitorPanel';
 import { CallsignRecognizerDiagnostics } from './components/CallsignRecognizerDiagnostics';
 
@@ -32,6 +33,7 @@ export function CallsignMonitorApp() {
         </View>
 
         <CallsignMonitorPanel />
+        <CallsignAlertTestPanel />
         <CallsignRecognizerDiagnostics />
 
         <View style={styles.notice}>
