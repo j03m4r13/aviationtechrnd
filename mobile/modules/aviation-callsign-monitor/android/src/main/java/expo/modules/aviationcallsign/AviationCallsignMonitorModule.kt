@@ -83,6 +83,14 @@ class AviationCallsignMonitorModule : Module() {
       current.status()
     }
 
+    AsyncFunction("testAlert") { confirmed: Boolean ->
+      CallsignAlertTone.play(confirmed)
+      mapOf(
+        "success" to true,
+        "confirmed" to confirmed
+      )
+    }
+
     AsyncFunction("getStatus") {
       engine?.status() ?: CallsignMonitorEngine.emptyStatus()
     }
