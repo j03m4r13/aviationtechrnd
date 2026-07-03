@@ -20,6 +20,13 @@ class AviationCallsignMonitorModule : Module() {
       val context = appContext.reactContext
         ?: throw IllegalStateException("React context is not available")
 
+      val effectiveWhisperAssetFile =
+        if (whisperAssetFile == "models/ggml-small.en-q5_1.bin") {
+          "models/ggml-base.en-q5_1.bin"
+        } else {
+          whisperAssetFile
+        }
+
       engine?.close()
       engine = CallsignMonitorEngine(context, object : CallsignMonitorEngine.Listener {
         override fun onStatus(payload: Map<String, Any?>) {
@@ -39,7 +46,12 @@ class AviationCallsignMonitorModule : Module() {
         }
       })
 
-      engine!!.initialize(callsign, aliases, voskAssetDirectory, whisperAssetFile)
+      engine!!.initialize(
+        callsign,
+        aliases,
+        voskAssetDirectory,
+        effectiveWhisperAssetFile
+      )
       engine!!.status()
     }
 
