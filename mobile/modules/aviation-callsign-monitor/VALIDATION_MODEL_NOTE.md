@@ -1,0 +1,1 @@
+Temporary validation profile: base.en-q5_1, four CPU threads, and a six-second maximum inference window. This verifies that the native whisper.cpp path completes reliably on Android before moving back to a larger model for accuracy testing.
