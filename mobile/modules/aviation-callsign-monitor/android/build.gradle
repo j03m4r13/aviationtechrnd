@@ -10,7 +10,9 @@ android {
   namespace 'expo.modules.aviationcallsign'
 
   defaultConfig {
-    minSdk 26
+    // Match the Expo application's Android minimum. The native monitor uses
+    // AudioRecord.Builder (API 23) and does not require API 26-only features.
+    minSdk 24
     versionCode 1
     versionName '0.1.0'
 
