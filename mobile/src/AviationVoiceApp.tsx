@@ -2,6 +2,7 @@ import type { User } from '@supabase/supabase-js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  PermissionsAndroid,
   Platform,
   Pressable,
   ScrollView,
@@ -21,6 +22,8 @@ import {
 } from 'expo-audio';
 import { File } from 'expo-file-system';
 import { StatusBar } from 'expo-status-bar';
+
+import BluetoothAudioRoute from '../modules/bluetooth-audio-route';
 
 import { AudioInputList } from './components/AudioInputList';
 import { AccountScreen } from './components/AccountScreen';
@@ -55,6 +58,41 @@ import type { RecordingSession } from './types/session';
 
 const HEADSET_HINT =
   /(rog|bluetooth|headset|external|usb|wireless|sco|ble)/i;
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isBluetoothInput(input: RecordingInput | null | undefined): boolean {
+  if (!input) {
+    return false;
+  }
+
+  return HEADSET_HINT.test(`${input.name} ${input.type}`);
+}
+
+async function requestBluetoothConnectPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android' || Number(Platform.Version) < 31) {
+    return true;
+  }
+
+  const permission = PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT;
+  const alreadyGranted = await PermissionsAndroid.check(permission);
+
+  if (alreadyGranted) {
+    return true;
+  }
+
+  const result = await PermissionsAndroid.request(permission, {
+    title: 'Bluetooth headset access',
+    message:
+      'Aviation Voice needs Bluetooth access to use your headset microphone.',
+    buttonPositive: 'Allow',
+    buttonNegative: 'Cancel'
+  });
+
+  return result === PermissionsAndroid.RESULTS.GRANTED;
+}
 
 type AppScreen = 'record' | 'history' | 'account';
 
@@ -102,6 +140,12 @@ export function AviationVoiceApp({ user, signOut }: Props) {
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [message, setMessage] = useState('Initializing storage and audio…');
   const preparePromiseRef = useRef<Promise<void> | null>(null);
+  const recordingTransitionRef = useRef(false);
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const [recordingTransition, setRecordingTransition] = useState<
+    'idle' | 'starting' | 'stopping'
+  >('idle');
+  const [recordingActive, setRecordingActive] = useState(false);
 
   const ensureRecorderPrepared = useCallback(async () => {
     const status = recorder.getStatus();
@@ -124,8 +168,12 @@ export function AviationVoiceApp({ user, signOut }: Props) {
     setSessions(storedSessions);
   }, [userId]);
 
+  const isRecording = recorderState.isRecording || recordingActive;
+
   const isBusy =
-    recorderState.isRecording || processingState === 'uploading';
+    isRecording ||
+    recordingTransition !== 'idle' ||
+    processingState === 'uploading';
 
   const meterPercent = useMemo(() => {
     const value = recorderState.metering;
@@ -244,11 +292,21 @@ export function AviationVoiceApp({ user, signOut }: Props) {
         return;
       }
 
+      const bluetoothPermissionGranted =
+        await requestBluetoothConnectPermission();
+
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
+        shouldRouteThroughEarpiece: false,
         interruptionMode: 'doNotMix'
       });
+
+      if (!bluetoothPermissionGranted && !cancelled) {
+        setMessage(
+          'Bluetooth access was denied. The built-in microphone can still be used.'
+        );
+      }
 
       if (!cancelled) {
         await refreshInputs();
@@ -270,13 +328,41 @@ export function AviationVoiceApp({ user, signOut }: Props) {
 
   async function selectInput(input: RecordingInput) {
     try {
+      if (isBluetoothInput(input)) {
+        const bluetoothPermissionGranted =
+          await requestBluetoothConnectPermission();
+
+        if (!bluetoothPermissionGranted) {
+          throw new Error(
+            'Bluetooth permission is required to use the headset microphone.'
+          );
+        }
+      }
+
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        shouldRouteThroughEarpiece: false,
+        interruptionMode: 'doNotMix'
+      });
+
       await ensureRecorderPrepared();
       await recorder.setInput(input.uid);
+
+      // setInput stores the preferred microphone. The actual Bluetooth
+      // communication route is activated only while recording.
+      if (Platform.OS === 'android' && isBluetoothInput(input)) {
+        await sleep(200);
+        await BluetoothAudioRoute.stopBluetoothRoute();
+      }
+
       const selected = await recorder.getCurrentInput();
 
       setSelectedInputUid(input.uid);
       setCurrentInput(selected);
       setMessage(`Selected input: ${selected.name}`);
+
+      console.log('Selected recording input', selected);
     } catch (error) {
       console.error('selectInput failed', error);
       Alert.alert(
@@ -292,14 +378,43 @@ export function AviationVoiceApp({ user, signOut }: Props) {
       return;
     }
 
+    // Prevent several native record() calls when the button is tapped quickly.
+    if (recordingTransitionRef.current || isRecording) {
+      return;
+    }
+
+    recordingTransitionRef.current = true;
+    setRecordingTransition('starting');
+
     try {
       player.pause();
       setPlayingSessionId(null);
       setRecordingUri(null);
       setActiveSessionId(null);
       setResult(null);
-      setProcessingState('recording');
       setMessage('Preparing recorder…');
+
+      const requestedInput =
+        inputs.find((input) => input.uid === selectedInputUid) ?? null;
+      const wantsBluetooth = isBluetoothInput(requestedInput);
+
+      if (wantsBluetooth) {
+        const bluetoothPermissionGranted =
+          await requestBluetoothConnectPermission();
+
+        if (!bluetoothPermissionGranted) {
+          throw new Error(
+            'Bluetooth permission is required to use the headset microphone.'
+          );
+        }
+      }
+
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        shouldRouteThroughEarpiece: false,
+        interruptionMode: 'doNotMix'
+      });
 
       await ensureRecorderPrepared();
 
@@ -307,30 +422,136 @@ export function AviationVoiceApp({ user, signOut }: Props) {
         await recorder.setInput(selectedInputUid);
       }
 
-      const selected = await recorder.getCurrentInput();
-      setCurrentInput(selected);
+      if (Platform.OS === 'android') {
+        if (wantsBluetooth) {
+          setMessage('Connecting the Bluetooth call-audio route…');
+          const route = await BluetoothAudioRoute.startBluetoothRoute();
 
+          console.log('Bluetooth route result', route);
+
+          if (!route.success) {
+            throw new Error(
+              route.message ||
+                'Android could not activate the Bluetooth headset microphone.'
+            );
+          }
+
+          // Give the headset HFP/SCO route time to settle before MediaRecorder starts.
+          await sleep(700);
+        } else {
+          await BluetoothAudioRoute.stopBluetoothRoute();
+        }
+      }
+
+      // Expo's documented start sequence is prepareToRecordAsync() followed by
+      // record(). record() returns void; recorder state updates arrive separately.
       recorder.record();
-      setMessage(`Recording from ${selected.name}`);
+
+      recordingStartedAtRef.current = Date.now();
+      setRecordingActive(true);
+      setProcessingState('recording');
+
+      let selected = requestedInput;
+      try {
+        selected = await recorder.getCurrentInput();
+      } catch (inputError) {
+        console.warn('Unable to read routed input after starting', inputError);
+      }
+
+      if (selected) {
+        setCurrentInput(selected);
+      }
+
+      console.log('Recorder start requested', {
+        selectedInput: selected,
+        bluetooth: wantsBluetooth
+      });
+
+      setMessage(
+        selected
+          ? `Recording from ${selected.name}`
+          : 'Recording started.'
+      );
     } catch (error) {
       console.error('startRecording failed', error);
+
+      try {
+        if (recorder.isRecording) {
+          await recorder.stop();
+        }
+      } catch (cleanupError) {
+        console.warn('Recorder cleanup after start failure failed', cleanupError);
+      }
+
+      if (Platform.OS === 'android') {
+        try {
+          await BluetoothAudioRoute.stopBluetoothRoute();
+        } catch (routeCleanupError) {
+          console.warn('Bluetooth route cleanup failed', routeCleanupError);
+        }
+      }
+
+      recordingStartedAtRef.current = null;
+      setRecordingActive(false);
       setProcessingState('error');
       setMessage(
         error instanceof Error ? error.message : 'Unable to start recording.'
       );
+    } finally {
+      recordingTransitionRef.current = false;
+      setRecordingTransition('idle');
     }
   }
 
   async function stopRecording() {
-    const durationMs = Math.max(1, recorderState.durationMillis);
+    if (recordingTransitionRef.current) {
+      return;
+    }
+
+    recordingTransitionRef.current = true;
+    setRecordingTransition('stopping');
+
+    const elapsedFallback = recordingStartedAtRef.current
+      ? Date.now() - recordingStartedAtRef.current
+      : 0;
+    const durationMs = Math.max(
+      1,
+      recorderState.durationMillis,
+      elapsedFallback
+    );
 
     try {
       setMessage('Finalizing and saving recording…');
       await recorder.stop();
+      setRecordingActive(false);
+      recordingStartedAtRef.current = null;
+
+      if (Platform.OS === 'android') {
+        await BluetoothAudioRoute.stopBluetoothRoute();
+      }
+
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        shouldRouteThroughEarpiece: false,
+        interruptionMode: 'doNotMix'
+      });
 
       const uri = recorder.uri;
       if (!uri) {
         throw new Error('The recorder stopped without returning a file URI.');
+      }
+
+      const recordedFile = new File(uri);
+      console.log('Recorded audio file', {
+        uri,
+        exists: recordedFile.exists,
+        size: recordedFile.size,
+        durationMs
+      });
+
+      if (!recordedFile.exists || recordedFile.size === 0) {
+        throw new Error('Android created an empty audio recording.');
       }
 
       const session = await createRecordingSession({
@@ -351,15 +572,35 @@ export function AviationVoiceApp({ user, signOut }: Props) {
       await refreshSessions();
     } catch (error) {
       console.error('stopRecording failed', error);
+      setRecordingActive(false);
+      recordingStartedAtRef.current = null;
       setProcessingState('error');
       setMessage(
         error instanceof Error ? error.message : 'Unable to save recording.'
       );
+    } finally {
+      if (Platform.OS === 'android') {
+        try {
+          await BluetoothAudioRoute.stopBluetoothRoute();
+        } catch (routeCleanupError) {
+          console.warn('Bluetooth route cleanup failed', routeCleanupError);
+        }
+      }
+
+      recordingTransitionRef.current = false;
+      setRecordingTransition('idle');
     }
   }
 
   async function playAudio(uri: string, sessionId: string) {
     try {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        shouldRouteThroughEarpiece: false,
+        interruptionMode: 'doNotMix'
+      });
+
       const file = new File(uri);
       if (!file.exists || file.size === 0) {
         throw new Error('The audio file is missing or empty.');
@@ -532,12 +773,12 @@ export function AviationVoiceApp({ user, signOut }: Props) {
             </Text>
           </Pressable>
           <Pressable
-            disabled={recorderState.isRecording}
+            disabled={isRecording}
             onPress={() => switchScreen('history')}
             style={[
               styles.tab,
               screen === 'history' && styles.tabActive,
-              recorderState.isRecording && styles.dimmed
+              isRecording && styles.dimmed
             ]}
           >
             <Text
@@ -550,12 +791,12 @@ export function AviationVoiceApp({ user, signOut }: Props) {
             </Text>
           </Pressable>
           <Pressable
-            disabled={recorderState.isRecording}
+            disabled={isRecording}
             onPress={() => switchScreen('account')}
             style={[
               styles.tab,
               screen === 'account' && styles.tabActive,
-              recorderState.isRecording && styles.dimmed
+              isRecording && styles.dimmed
             ]}
           >
             <Text
@@ -605,7 +846,7 @@ export function AviationVoiceApp({ user, signOut }: Props) {
                   {formatDuration(recorderState.durationMillis)}
                 </Text>
                 <Text style={styles.recordingState}>
-                  {recorderState.isRecording ? 'RECORDING' : 'READY'}
+                  {isRecording ? 'RECORDING' : 'READY'}
                 </Text>
               </View>
 
@@ -619,20 +860,30 @@ export function AviationVoiceApp({ user, signOut }: Props) {
               </View>
 
               <PrimaryButton
-                danger={recorderState.isRecording}
-                disabled={processingState === 'uploading' || !databaseReady}
+                danger={isRecording}
+                disabled={
+                  processingState === 'uploading' ||
+                  !databaseReady ||
+                  recordingTransition !== 'idle'
+                }
                 label={
-                  recorderState.isRecording ? 'Stop recording' : 'Start recording'
+                  recordingTransition === 'starting'
+                    ? 'Starting recorder…'
+                    : recordingTransition === 'stopping'
+                      ? 'Stopping recorder…'
+                      : isRecording
+                        ? 'Stop recording'
+                        : 'Start recording'
                 }
                 onPress={() =>
-                  void (recorderState.isRecording
+                  void (isRecording
                     ? stopRecording()
                     : startRecording())
                 }
               />
 
               <PrimaryButton
-                disabled={!recordingUri || recorderState.isRecording}
+                disabled={!recordingUri || isRecording}
                 label={
                   playerState.playing && playingSessionId === activeSessionId
                     ? 'Pause playback'
@@ -669,7 +920,7 @@ export function AviationVoiceApp({ user, signOut }: Props) {
               />
 
               <PrimaryButton
-                disabled={!recordingUri || !activeSessionId || recorderState.isRecording}
+                disabled={!recordingUri || !activeSessionId || isRecording}
                 label="Transcribe and translate"
                 loading={processingState === 'uploading'}
                 onPress={() => void transcribeAndTranslate()}
