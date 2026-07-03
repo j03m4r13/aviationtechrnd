@@ -1,5 +1,6 @@
 package expo.modules.aviationcallsign
 
+import android.util.Log
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
@@ -14,7 +15,7 @@ internal class WhisperEngine : Closeable {
     TimeUnit.MILLISECONDS,
     ArrayBlockingQueue(1),
     { runnable ->
-      Thread(runnable, "aviation-whisper").apply { priority = Thread.NORM_PRIORITY + 1 }
+      Thread(runnable, "aviation-whisper").apply { priority = Thread.NORM_PRIORITY }
     },
     ThreadPoolExecutor.DiscardOldestPolicy()
   )
@@ -46,12 +47,20 @@ internal class WhisperEngine : Closeable {
       }
 
       runCatching {
-        val audio = FloatArray(samples.size) { index ->
-          samples[index].toFloat() / Short.MAX_VALUE.toFloat()
+        val maximumSamples = 16_000 * 6
+        val limitedSamples =
+          if (samples.size > maximumSamples) samples.copyOf(maximumSamples) else samples
+
+        Log.i(
+          "AviationWhisper",
+          "Preparing ${limitedSamples.size} samples (${limitedSamples.size * 1000 / 16_000} ms)"
+        )
+
+        val audio = FloatArray(limitedSamples.size) { index ->
+          limitedSamples[index].toFloat() / Short.MAX_VALUE.toFloat()
         }
-        val available = Runtime.getRuntime().availableProcessors()
-        val threads = (available - 2).coerceIn(4, 8)
-        WhisperNative.nativeTranscribe(pointer, audio, threads).trim()
+
+        WhisperNative.nativeTranscribe(pointer, audio, 4).trim()
       }.also(callback)
     }
   }
