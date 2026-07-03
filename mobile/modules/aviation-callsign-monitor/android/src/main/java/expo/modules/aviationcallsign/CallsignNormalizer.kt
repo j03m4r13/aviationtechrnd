@@ -80,18 +80,44 @@ internal object CallsignNormalizer {
   fun grammar(target: String, aliases: List<String>): String {
     val phrases = linkedSetOf<String>()
     val spoken = spokenTarget(target)
+    val suffixes = linkedSetOf<String>()
+
     if (spoken.isNotBlank()) {
-      phrases += spoken
+      suffixes += spoken
       val words = spoken.split(' ')
       for (drop in 1..minOf(3, words.size - 3)) {
-        phrases += words.drop(drop).joinToString(" ")
+        suffixes += words.drop(drop).joinToString(" ")
+      }
+      phrases += suffixes
+    }
+
+    aliases
+      .map(String::trim)
+      .filter(String::isNotEmpty)
+      .forEach(phrases::add)
+
+    // Controllers frequently prepend an aircraft type to either the full
+    // registration or the shortened tail number. Include both forms in the
+    // constrained grammar so Vosk does not reject an otherwise valid call.
+    val aircraftPrefixes = listOf(
+      "cessna",
+      "piper",
+      "skyhawk",
+      "bonanza",
+      "citation",
+      "cherokee"
+    )
+    for (prefix in aircraftPrefixes) {
+      for (suffix in suffixes) {
+        phrases += "$prefix $suffix"
       }
     }
 
-    aliases.map(String::trim).filter(String::isNotEmpty).forEach(phrases::add)
-    phrases += "cessna $spoken"
-    phrases += "piper $spoken"
-    phrases += "november $spoken"
+    // Avoid the previous "november november ..." duplicate for US N-numbers.
+    if (spoken.isNotBlank() && !spoken.startsWith("november ")) {
+      phrases += "november $spoken"
+    }
+
     phrases += "[unk]"
 
     return phrases.joinToString(prefix = "[", postfix = "]") { phrase ->
