@@ -12,12 +12,22 @@ import {
   View
 } from 'react-native';
 import { requestRecordingPermissionsAsync } from 'expo-audio';
+import * as SecureStore from 'expo-secure-store';
 
 import AviationCallsignMonitor, {
   useCallsignMonitor
 } from '../../modules/aviation-callsign-monitor';
 import type { CallsignAlertEvent } from '../../modules/aviation-callsign-monitor';
 import BluetoothAudioRoute from '../../modules/bluetooth-audio-route';
+
+const CALLSIGN_PREFERENCES_KEY = 'callsign-monitor-preferences-v1';
+const DEFAULT_CALLSIGN = 'N734AB';
+const DEFAULT_ALIASES = 'three four alpha bravo';
+
+type SavedCallsignPreferences = {
+  callsign: string;
+  aliasText: string;
+};
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -52,9 +62,10 @@ async function requestBluetoothPermission(): Promise<boolean> {
 }
 
 export function CallsignMonitorPanel() {
-  const [callsign, setCallsign] = useState('N734AB');
-  const [aliasText, setAliasText] = useState('three four alpha bravo');
+  const [callsign, setCallsign] = useState(DEFAULT_CALLSIGN);
+  const [aliasText, setAliasText] = useState(DEFAULT_ALIASES);
   const [useBluetooth, setUseBluetooth] = useState(false);
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
 
   const aliases = useMemo(
     () =>
@@ -67,6 +78,55 @@ export function CallsignMonitorPanel() {
   const config = useMemo(() => ({ callsign, aliases }), [callsign, aliases]);
   const monitor = useCallsignMonitor(config);
   const alertConfirmed = isConfirmedAlert(monitor.lastAlert);
+
+  useEffect(() => {
+    let active = true;
+
+    void SecureStore.getItemAsync(CALLSIGN_PREFERENCES_KEY)
+      .then((savedValue) => {
+        if (!active || !savedValue) {
+          return;
+        }
+
+        const saved = JSON.parse(savedValue) as Partial<SavedCallsignPreferences>;
+        if (typeof saved.callsign === 'string' && saved.callsign.trim()) {
+          setCallsign(saved.callsign.trim().toUpperCase());
+        }
+        if (typeof saved.aliasText === 'string') {
+          setAliasText(saved.aliasText);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) {
+          setPreferencesLoaded(true);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!preferencesLoaded) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      const preferences: SavedCallsignPreferences = {
+        callsign: callsign.trim().toUpperCase(),
+        aliasText
+      };
+
+      void SecureStore.setItemAsync(
+        CALLSIGN_PREFERENCES_KEY,
+        JSON.stringify(preferences)
+      ).catch(() => undefined);
+    }, 250);
+
+    return () => clearTimeout(timeout);
+  }, [aliasText, callsign, preferencesLoaded]);
 
   useEffect(() => {
     const alert = monitor.lastAlert;
@@ -88,7 +148,7 @@ export function CallsignMonitorPanel() {
 
     const timeout = setTimeout(
       monitor.clearAlert,
-      alertConfirmed ? 10_000 : 8_000
+      alertConfirmed ? 3_000 : 8_000
     );
     return () => clearTimeout(timeout);
   }, [alertConfirmed, monitor.clearAlert, monitor.lastAlert]);
@@ -112,6 +172,13 @@ export function CallsignMonitorPanel() {
         );
         return;
       }
+
+      const normalizedCallsign = callsign.trim().toUpperCase();
+      if (!normalizedCallsign) {
+        Alert.alert('Callsign required', 'Enter the aircraft callsign first.');
+        return;
+      }
+      setCallsign(normalizedCallsign);
 
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
@@ -186,7 +253,7 @@ export function CallsignMonitorPanel() {
         autoCorrect={false}
         editable={!monitor.status.monitoring}
         onChangeText={setCallsign}
-        placeholder="N734AB"
+        placeholder={DEFAULT_CALLSIGN}
         placeholderTextColor="#64748b"
         style={styles.input}
         value={callsign}
@@ -197,11 +264,15 @@ export function CallsignMonitorPanel() {
         autoCorrect={false}
         editable={!monitor.status.monitoring}
         onChangeText={setAliasText}
-        placeholder="three four alpha bravo"
+        placeholder={DEFAULT_ALIASES}
         placeholderTextColor="#64748b"
         style={styles.input}
         value={aliasText}
       />
+
+      <Text style={styles.savedText}>
+        Callsign and spoken aliases are saved automatically on this device.
+      </Text>
 
       <View style={styles.switchRow}>
         <View style={styles.switchCopy}>
@@ -397,6 +468,11 @@ const styles = StyleSheet.create({
     color: '#f8fafc',
     paddingHorizontal: 12,
     paddingVertical: 10
+  },
+  savedText: {
+    color: '#64748b',
+    fontSize: 11,
+    lineHeight: 16
   },
   switchRow: {
     alignItems: 'center',
