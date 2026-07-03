@@ -9,7 +9,7 @@ internal enum class VadEvent { SILENCE, START, SPEECH, END }
 
 internal class AdaptiveVad(
   private val startFrames: Int = 2,
-  private val endFrames: Int = 25,
+  private val endFrames: Int = 15,
   private val marginDb: Double = 6.0,
   private val minimumThresholdDb: Double = -58.0,
   private val calibrationFrames: Int = 25
