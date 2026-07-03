@@ -16,10 +16,18 @@ import { requestRecordingPermissionsAsync } from 'expo-audio';
 import AviationCallsignMonitor, {
   useCallsignMonitor
 } from '../../modules/aviation-callsign-monitor';
+import type { CallsignAlertEvent } from '../../modules/aviation-callsign-monitor';
 import BluetoothAudioRoute from '../../modules/bluetooth-audio-route';
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isConfirmedAlert(alert: CallsignAlertEvent | null): boolean {
+  return Boolean(
+    alert &&
+      (alert.confirmed || alert.source === 'WHISPER' || alert.source === 'BOTH')
+  );
 }
 
 async function requestBluetoothPermission(): Promise<boolean> {
@@ -58,6 +66,7 @@ export function CallsignMonitorPanel() {
   );
   const config = useMemo(() => ({ callsign, aliases }), [callsign, aliases]);
   const monitor = useCallsignMonitor(config);
+  const alertConfirmed = isConfirmedAlert(monitor.lastAlert);
 
   useEffect(() => {
     const alert = monitor.lastAlert;
@@ -65,7 +74,11 @@ export function CallsignMonitorPanel() {
       return;
     }
 
-    Vibration.vibrate([0, 180, 100, 300]);
+    if (isConfirmedAlert(alert)) {
+      Vibration.vibrate([0, 120, 80, 120]);
+    } else {
+      Vibration.vibrate([0, 220, 100, 340]);
+    }
   }, [monitor.lastAlert]);
 
   useEffect(() => {
@@ -73,9 +86,12 @@ export function CallsignMonitorPanel() {
       return;
     }
 
-    const timeout = setTimeout(monitor.clearAlert, 8_000);
+    const timeout = setTimeout(
+      monitor.clearAlert,
+      alertConfirmed ? 10_000 : 8_000
+    );
     return () => clearTimeout(timeout);
-  }, [monitor.clearAlert, monitor.lastAlert]);
+  }, [alertConfirmed, monitor.clearAlert, monitor.lastAlert]);
 
   useEffect(() => {
     return () => {
@@ -143,12 +159,25 @@ export function CallsignMonitorPanel() {
   }
 
   const alertActive = Boolean(monitor.lastAlert);
+  const confirmationDetail =
+    monitor.lastAlert?.source === 'BOTH'
+      ? 'Vosk + Whisper agreement'
+      : 'Verified by Whisper';
 
   return (
-    <View style={[styles.card, alertActive && styles.alertCard]}>
+    <View
+      style={[
+        styles.card,
+        alertActive &&
+          (alertConfirmed
+            ? styles.alertCardConfirmed
+            : styles.alertCardPossible)
+      ]}
+    >
       <Text style={styles.title}>Offline Callsign Monitor</Text>
       <Text style={styles.subtitle}>
-        Vosk listens continuously; Whisper checks every completed transmission.
+        Vosk gives an immediate attention alert; Whisper then verifies the
+        detected callsign.
       </Text>
 
       <Text style={styles.label}>Aircraft callsign</Text>
@@ -218,17 +247,78 @@ export function CallsignMonitorPanel() {
       ) : null}
 
       {monitor.lastAlert ? (
-        <View style={styles.alertBox}>
-          <Text style={styles.alertTitle}>
-            CALLSIGN DETECTED: {monitor.lastAlert.target}
+        <View
+          style={[
+            styles.alertBox,
+            alertConfirmed
+              ? styles.alertBoxConfirmed
+              : styles.alertBoxPossible
+          ]}
+        >
+          <View style={styles.alertHeaderRow}>
+            <Text
+              style={[
+                styles.alertStage,
+                alertConfirmed
+                  ? styles.alertStageConfirmed
+                  : styles.alertStagePossible
+              ]}
+            >
+              {alertConfirmed ? 'CONFIRMED' : 'POSSIBLE'}
+            </Text>
+            <Text
+              style={[
+                styles.alertConfidence,
+                alertConfirmed
+                  ? styles.alertTextConfirmed
+                  : styles.alertTextPossible
+              ]}
+            >
+              {(monitor.lastAlert.score * 100).toFixed(0)}%
+            </Text>
+          </View>
+
+          <Text
+            style={[
+              styles.alertTitle,
+              alertConfirmed
+                ? styles.alertTitleConfirmed
+                : styles.alertTitlePossible
+            ]}
+          >
+            {alertConfirmed ? 'CALLSIGN CONFIRMED' : 'POSSIBLE CALLSIGN'}:{' '}
+            {monitor.lastAlert.target}
           </Text>
-          <Text style={styles.alertText}>
-            {monitor.lastAlert.source} ·{' '}
-            {(monitor.lastAlert.score * 100).toFixed(0)}%
-            {monitor.lastAlert.confirmed ? ' · CONFIRMED' : ''}
+
+          <Text
+            style={[
+              styles.alertText,
+              alertConfirmed
+                ? styles.alertTextConfirmed
+                : styles.alertTextPossible
+            ]}
+          >
+            {alertConfirmed
+              ? confirmationDetail
+              : `Immediate Vosk alert · Whisper ${
+                  monitor.status.whisperState === 'queued'
+                    ? 'verification queued'
+                    : monitor.status.whisperState === 'capturing'
+                      ? 'is capturing the transmission'
+                      : 'verification pending'
+                }`}
           </Text>
-          <Text numberOfLines={3} style={styles.alertText}>
-            {monitor.lastAlert.transcript}
+
+          <Text
+            numberOfLines={3}
+            style={[
+              styles.alertText,
+              alertConfirmed
+                ? styles.alertTextConfirmed
+                : styles.alertTextPossible
+            ]}
+          >
+            Heard: {monitor.lastAlert.transcript}
           </Text>
         </View>
       ) : null}
@@ -275,8 +365,12 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 16
   },
-  alertCard: {
+  alertCardPossible: {
     borderColor: '#f59e0b',
+    borderWidth: 3
+  },
+  alertCardConfirmed: {
+    borderColor: '#22c55e',
     borderWidth: 3
   },
   title: {
@@ -357,18 +451,66 @@ const styles = StyleSheet.create({
     lineHeight: 17
   },
   alertBox: {
-    backgroundColor: '#451a03',
-    borderRadius: 10,
-    padding: 12
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 5,
+    padding: 13
   },
-  alertTitle: {
-    color: '#fbbf24',
-    fontSize: 16,
+  alertBoxPossible: {
+    backgroundColor: '#451a03',
+    borderColor: '#b45309'
+  },
+  alertBoxConfirmed: {
+    backgroundColor: '#052e16',
+    borderColor: '#16a34a'
+  },
+  alertHeaderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between'
+  },
+  alertStage: {
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+    overflow: 'hidden',
+    paddingHorizontal: 9,
+    paddingVertical: 4
+  },
+  alertStagePossible: {
+    backgroundColor: '#f59e0b',
+    color: '#2b1700'
+  },
+  alertStageConfirmed: {
+    backgroundColor: '#22c55e',
+    color: '#03210f'
+  },
+  alertConfidence: {
+    fontSize: 13,
     fontWeight: '800'
   },
+  alertTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    marginTop: 4
+  },
+  alertTitlePossible: {
+    color: '#fbbf24'
+  },
+  alertTitleConfirmed: {
+    color: '#86efac'
+  },
   alertText: {
-    color: '#fed7aa',
-    marginTop: 3
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 2
+  },
+  alertTextPossible: {
+    color: '#fed7aa'
+  },
+  alertTextConfirmed: {
+    color: '#bbf7d0'
   },
   error: {
     color: '#fca5a5'
