@@ -8,7 +8,10 @@ import type {
   CallsignStatusEvent,
   CallsignTranscriptEvent
 } from './AviationCallsignMonitor.types';
-import type { FlightSessionStatus } from './FlightSession.types';
+import type {
+  FlightSessionStatus,
+  FlightSessionSummary
+} from './FlightSession.types';
 
 type NativeCallsignModule = {
   initialize(
@@ -23,6 +26,7 @@ type NativeCallsignModule = {
   startFlightSession(): Promise<FlightSessionStatus>;
   stopFlightSession(): Promise<FlightSessionStatus>;
   getFlightSessionStatus(): Promise<FlightSessionStatus>;
+  listFlightSessions(): Promise<FlightSessionSummary[]>;
   testAlert(confirmed: boolean): Promise<{
     success: boolean;
     confirmed: boolean;
@@ -79,6 +83,7 @@ export const startFlightSession = () => NativeModule.startFlightSession();
 export const stopFlightSession = () => NativeModule.stopFlightSession();
 export const getFlightSessionStatus = () =>
   NativeModule.getFlightSessionStatus();
+export const listFlightSessions = () => NativeModule.listFlightSessions();
 export const testAlert = (confirmed: boolean) =>
   NativeModule.testAlert(confirmed);
 
@@ -107,6 +112,7 @@ export default {
   startFlightSession,
   stopFlightSession,
   getFlightSessionStatus,
+  listFlightSessions,
   testAlert,
   addCallsignAlertListener,
   addTranscriptListener,
