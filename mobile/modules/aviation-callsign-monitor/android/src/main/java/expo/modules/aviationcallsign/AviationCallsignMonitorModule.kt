@@ -5,6 +5,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 
 class AviationCallsignMonitorModule : Module() {
   private var engine: CallsignMonitorEngine? = null
+  private var flightSession: FlightSessionEngine? = null
 
   override fun definition() = ModuleDefinition {
     Name("AviationCallsignMonitor")
@@ -27,6 +28,8 @@ class AviationCallsignMonitorModule : Module() {
           whisperAssetFile
         }
 
+      flightSession?.close()
+      flightSession = null
       engine?.close()
       engine = CallsignMonitorEngine(context, object : CallsignMonitorEngine.Listener {
         override fun onStatus(payload: Map<String, Any?>) {
@@ -38,6 +41,8 @@ class AviationCallsignMonitorModule : Module() {
         }
 
         override fun onAlert(payload: Map<String, Any?>) {
+          flightSession?.recordCallsignAlert(payload)
+
           val source = payload["source"] as? String
           val confirmed =
             payload["confirmed"] as? Boolean == true ||
@@ -63,6 +68,7 @@ class AviationCallsignMonitorModule : Module() {
         voskAssetDirectory,
         effectiveWhisperAssetFile
       )
+      flightSession = FlightSessionEngine(context, engine!!)
       engine!!.status()
     }
 
@@ -83,6 +89,20 @@ class AviationCallsignMonitorModule : Module() {
       current.status()
     }
 
+    AsyncFunction("startFlightSession") {
+      val currentSession = flightSession
+        ?: throw IllegalStateException("Initialize the monitor first")
+      currentSession.start()
+    }
+
+    AsyncFunction("stopFlightSession") {
+      flightSession?.stop() ?: emptyFlightSessionStatus()
+    }
+
+    AsyncFunction("getFlightSessionStatus") {
+      flightSession?.status() ?: emptyFlightSessionStatus()
+    }
+
     AsyncFunction("testAlert") { confirmed: Boolean ->
       CallsignAlertTone.play(confirmed)
       mapOf(
@@ -96,8 +116,25 @@ class AviationCallsignMonitorModule : Module() {
     }
 
     OnDestroy {
+      flightSession?.close()
+      flightSession = null
       engine?.close()
       engine = null
     }
   }
+
+  private fun emptyFlightSessionStatus(): Map<String, Any?> = mapOf(
+    "active" to false,
+    "sessionId" to null,
+    "recordingFile" to null,
+    "recordingContainer" to null,
+    "recordingCodec" to null,
+    "recordingSampleRate" to null,
+    "recordingChannels" to null,
+    "recordingDurationMs" to null,
+    "recordingAudioBytes" to null,
+    "metadataFile" to null,
+    "eventCount" to 0,
+    "message" to null
+  )
 }
