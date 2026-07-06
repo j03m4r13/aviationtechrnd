@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   PermissionsAndroid,
@@ -66,6 +66,7 @@ export function CallsignMonitorPanel() {
   const [aliasText, setAliasText] = useState(DEFAULT_ALIASES);
   const [useBluetooth, setUseBluetooth] = useState(false);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
+  const preparedInitialConfig = useRef(false);
 
   const aliases = useMemo(
     () =>
@@ -127,6 +128,24 @@ export function CallsignMonitorPanel() {
 
     return () => clearTimeout(timeout);
   }, [aliasText, callsign, preferencesLoaded]);
+
+  useEffect(() => {
+    if (
+      !preferencesLoaded ||
+        preparedInitialConfig.current ||
+        monitor.status.monitoring ||
+        !callsign.trim()
+    ) {
+      return;
+    }
+
+    preparedInitialConfig.current = true;
+    const timeout = setTimeout(() => {
+      void monitor.prepare().catch(() => undefined);
+    }, 250);
+
+    return () => clearTimeout(timeout);
+  }, [callsign, monitor, preferencesLoaded]);
 
   useEffect(() => {
     const alert = monitor.lastAlert;
@@ -298,9 +317,11 @@ export function CallsignMonitorPanel() {
         <Text style={styles.statusText}>
           {monitor.status.monitoring
             ? 'Listening offline'
-            : monitor.status.initialized
-              ? 'Ready'
-              : 'Models not loaded'}
+            : monitor.busy
+              ? 'Loading offline models…'
+              : monitor.status.initialized
+                ? 'Ready'
+                : 'Models not loaded'}
         </Text>
       </View>
 
@@ -420,8 +441,8 @@ export function CallsignMonitorPanel() {
       </Pressable>
 
       <Text style={styles.ownershipWarning}>
-        The monitor owns the microphone while active. Stop it before returning
-        to recording and translation.
+        The normal monitor owns the microphone while active. The flight session
+        test uses the shared microphone path instead.
       </Text>
     </View>
   );
@@ -518,27 +539,30 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   modelText: {
-    color: '#74839a',
-    fontSize: 11
+    color: '#8fb2d9',
+    fontSize: 12
   },
   transcript: {
-    color: '#94a3b8',
+    backgroundColor: '#111827',
+    borderRadius: 10,
+    color: '#cbd5e1',
     fontSize: 12,
-    lineHeight: 17
+    lineHeight: 18,
+    padding: 10
   },
   alertBox: {
     borderRadius: 12,
     borderWidth: 1,
-    gap: 5,
-    padding: 13
+    gap: 6,
+    padding: 12
   },
   alertBoxPossible: {
-    backgroundColor: '#451a03',
-    borderColor: '#b45309'
+    backgroundColor: '#2a1a05',
+    borderColor: '#f59e0b'
   },
   alertBoxConfirmed: {
-    backgroundColor: '#052e16',
-    borderColor: '#16a34a'
+    backgroundColor: '#052e1a',
+    borderColor: '#22c55e'
   },
   alertHeaderRow: {
     alignItems: 'center',
@@ -546,21 +570,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between'
   },
   alertStage: {
-    borderRadius: 999,
     fontSize: 11,
     fontWeight: '900',
-    letterSpacing: 1,
-    overflow: 'hidden',
-    paddingHorizontal: 9,
-    paddingVertical: 4
+    letterSpacing: 1.1
   },
   alertStagePossible: {
-    backgroundColor: '#f59e0b',
-    color: '#2b1700'
+    color: '#fbbf24'
   },
   alertStageConfirmed: {
-    backgroundColor: '#22c55e',
-    color: '#03210f'
+    color: '#86efac'
   },
   alertConfidence: {
     fontSize: 13,
@@ -568,51 +586,52 @@ const styles = StyleSheet.create({
   },
   alertTitle: {
     fontSize: 17,
-    fontWeight: '900',
-    marginTop: 4
+    fontWeight: '900'
   },
   alertTitlePossible: {
-    color: '#fbbf24'
+    color: '#fde68a'
   },
   alertTitleConfirmed: {
-    color: '#86efac'
+    color: '#bbf7d0'
   },
   alertText: {
     fontSize: 13,
-    lineHeight: 18,
-    marginTop: 2
+    lineHeight: 18
   },
   alertTextPossible: {
     color: '#fed7aa'
   },
   alertTextConfirmed: {
-    color: '#bbf7d0'
+    color: '#dcfce7'
   },
   error: {
-    color: '#fca5a5'
+    color: '#fca5a5',
+    fontSize: 12,
+    lineHeight: 18
   },
   button: {
     alignItems: 'center',
     backgroundColor: '#2563eb',
-    borderRadius: 10,
-    marginTop: 8,
-    paddingVertical: 12
+    borderRadius: 12,
+    justifyContent: 'center',
+    minHeight: 48,
+    marginTop: 4
   },
   stopButton: {
     backgroundColor: '#b91c1c'
   },
   buttonPressed: {
-    opacity: 0.8
+    opacity: 0.75
   },
   buttonDisabled: {
-    opacity: 0.5
+    opacity: 0.55
   },
   buttonText: {
-    color: '#ffffff',
-    fontWeight: '700'
+    color: '#eff6ff',
+    fontWeight: '800'
   },
   ownershipWarning: {
-    color: '#8493a8',
+    color: '#94a3b8',
     fontSize: 11,
     lineHeight: 16,
     marginTop: 4
