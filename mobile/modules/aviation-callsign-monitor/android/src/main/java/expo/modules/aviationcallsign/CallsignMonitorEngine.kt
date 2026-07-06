@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class CallsignMonitorEngine(
   private val context: Context,
   private val listener: Listener
-) : Closeable {
+) : Closeable, AudioFrameConsumer {
   interface Listener {
     fun onStatus(payload: Map<String, Any?>)
     fun onTranscript(payload: Map<String, Any?>)
@@ -51,6 +51,7 @@ internal class CallsignMonitorEngine(
   @Volatile private var whisperEmptyCount = 0
   @Volatile private var lastWhisperSegmentMs = 0
   @Volatile private var lastWhisperQueueReason: String? = null
+  @Volatile private var externalAudioActive = false
 
   private var fastWhisperQueuedForUtterance = false
   private var lastWhisperQueuedAt = 0L
@@ -122,6 +123,7 @@ internal class CallsignMonitorEngine(
   fun start() {
     check(initialized) { "Initialize the monitor before starting" }
     if (!running.compareAndSet(false, true)) return
+    externalAudioActive = false
 
     if (
       ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
@@ -171,6 +173,7 @@ internal class CallsignMonitorEngine(
   @Synchronized
   fun stop() {
     val wasRunning = running.getAndSet(false)
+    externalAudioActive = false
     val recorder = audioRecord
 
     runCatching {
@@ -187,17 +190,60 @@ internal class CallsignMonitorEngine(
     audioThread = null
     audioRecord = null
     runCatching { recorder?.release() }
-    vad.reset()
-    preRoll.clear()
-    segment.clear()
-    voskPreRoll.clear()
-    voskSegment.clear()
-    voskCapturing = false
-    fastWhisperQueuedForUtterance = false
+    resetAudioState()
 
     if (wasRunning || recorder != null) {
       listener.onStatus(status() + ("message" to "Monitoring stopped"))
     }
+  }
+
+  override fun onAudioCaptureStarted(
+    sampleRate: Int,
+    channelCount: Int
+  ) {
+    check(initialized) { "Initialize the monitor before attaching shared audio" }
+    require(sampleRate == this.sampleRate) {
+      "Callsign monitor requires ${this.sampleRate} Hz audio, got $sampleRate Hz"
+    }
+    require(channelCount == 1) {
+      "Callsign monitor currently requires mono audio, got $channelCount channels"
+    }
+    if (!running.compareAndSet(false, true)) return
+    externalAudioActive = true
+    resetAudioState()
+    listener.onStatus(status() + ("message" to "Listening for callsign from shared flight audio"))
+  }
+
+  override fun onAudioFrame(frame: AudioFrame) {
+    if (!initialized || !running.get()) return
+    if (frame.sampleRate != sampleRate || frame.channelCount != 1) {
+      listener.onError(
+        "UNSUPPORTED_SHARED_AUDIO",
+        "Expected 16 kHz mono audio, got ${frame.sampleRate} Hz / ${frame.channelCount} channels"
+      )
+      return
+    }
+    processAudio(frame.samples, frame.samples.size)
+  }
+
+  override fun onAudioCaptureStopped() {
+    if (!externalAudioActive) return
+    val wasRunning = running.getAndSet(false)
+    externalAudioActive = false
+    resetAudioState()
+    if (wasRunning) {
+      listener.onStatus(status() + ("message" to "Shared flight audio stopped"))
+    }
+  }
+
+  override fun onAudioCaptureError(error: Throwable) {
+    running.set(false)
+    externalAudioActive = false
+    resetAudioState()
+    listener.onError(
+      "SHARED_AUDIO_FAILED",
+      error.message ?: error.javaClass.simpleName
+    )
   }
 
   private fun captureLoop(recorder: AudioRecord) {
@@ -212,29 +258,7 @@ internal class CallsignMonitorEngine(
         )
         if (count <= 0) continue
 
-        processVosk(frame, count)
-
-        when (vad.process(frame, count)) {
-          VadEvent.SILENCE -> preRoll.append(frame, count)
-          VadEvent.START -> {
-            if (!voskCapturing) {
-              fastWhisperQueuedForUtterance = false
-            }
-            segment.clear()
-            segment.append(preRoll.snapshot())
-            segment.append(frame, count)
-            preRoll.clear()
-            whisperState = "capturing"
-            emitStatus("Energy detector started a speech segment")
-          }
-          VadEvent.SPEECH -> {
-            if (segment.size > 0) segment.append(frame, count)
-          }
-          VadEvent.END -> finalizeEnergySegment()
-        }
-
-        if (segment.size >= maximumSegmentSamples) finalizeEnergySegment()
-        if (voskSegment.size >= maximumSegmentSamples) finalizeVoskSegment()
+        processAudio(frame, count)
       }
     } catch (error: Throwable) {
       if (running.get()) {
@@ -259,6 +283,42 @@ internal class CallsignMonitorEngine(
       runCatching { recorder.release() }
       listener.onStatus(status() + ("message" to "Audio capture ended"))
     }
+  }
+
+  private fun processAudio(frame: ShortArray, count: Int) {
+    processVosk(frame, count)
+
+    when (vad.process(frame, count)) {
+      VadEvent.SILENCE -> preRoll.append(frame, count)
+      VadEvent.START -> {
+        if (!voskCapturing) {
+          fastWhisperQueuedForUtterance = false
+        }
+        segment.clear()
+        segment.append(preRoll.snapshot())
+        segment.append(frame, count)
+        preRoll.clear()
+        whisperState = "capturing"
+        emitStatus("Energy detector started a speech segment")
+      }
+      VadEvent.SPEECH -> {
+        if (segment.size > 0) segment.append(frame, count)
+      }
+      VadEvent.END -> finalizeEnergySegment()
+    }
+
+    if (segment.size >= maximumSegmentSamples) finalizeEnergySegment()
+    if (voskSegment.size >= maximumSegmentSamples) finalizeVoskSegment()
+  }
+
+  private fun resetAudioState() {
+    vad.reset()
+    preRoll.clear()
+    segment.clear()
+    voskPreRoll.clear()
+    voskSegment.clear()
+    voskCapturing = false
+    fastWhisperQueuedForUtterance = false
   }
 
   private fun processVosk(frame: ShortArray, count: Int) {
