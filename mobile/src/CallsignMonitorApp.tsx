@@ -12,6 +12,7 @@ import { CallsignAlertTestPanel } from './components/CallsignAlertTestPanel';
 import { CallsignMonitorPanel } from './components/CallsignMonitorPanel';
 import { CallsignRecognizerDiagnostics } from './components/CallsignRecognizerDiagnostics';
 import { FlightSessionTestPanel } from './components/FlightSessionTestPanel';
+import { SavedFlightSessionsPanel } from './components/SavedFlightSessionsPanel';
 
 const topInset =
   Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 12 : 22;
@@ -35,6 +36,7 @@ export function CallsignMonitorApp() {
 
         <CallsignMonitorPanel />
         <FlightSessionTestPanel />
+        <SavedFlightSessionsPanel />
         <CallsignAlertTestPanel />
         <CallsignRecognizerDiagnostics />
 
