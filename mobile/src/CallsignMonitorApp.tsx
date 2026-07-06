@@ -11,6 +11,7 @@ import { StatusBar } from 'expo-status-bar';
 import { CallsignAlertTestPanel } from './components/CallsignAlertTestPanel';
 import { CallsignMonitorPanel } from './components/CallsignMonitorPanel';
 import { CallsignRecognizerDiagnostics } from './components/CallsignRecognizerDiagnostics';
+import { FlightSessionTestPanel } from './components/FlightSessionTestPanel';
 
 const topInset =
   Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 12 : 22;
@@ -33,6 +34,7 @@ export function CallsignMonitorApp() {
         </View>
 
         <CallsignMonitorPanel />
+        <FlightSessionTestPanel />
         <CallsignAlertTestPanel />
         <CallsignRecognizerDiagnostics />
 
