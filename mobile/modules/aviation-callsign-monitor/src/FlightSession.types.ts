@@ -12,3 +12,9 @@ export type FlightSessionStatus = {
   eventCount: number;
   message?: string | null;
 };
+
+export type FlightSessionSummary = Omit<FlightSessionStatus, 'active' | 'message'> & {
+  startedAtEpochMs: number;
+  endedAtEpochMs: number | null;
+  recordingExists: boolean;
+};
