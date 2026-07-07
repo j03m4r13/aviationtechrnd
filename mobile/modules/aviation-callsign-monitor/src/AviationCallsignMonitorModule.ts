@@ -27,6 +27,16 @@ type NativeCallsignModule = {
   stopFlightSession(): Promise<FlightSessionStatus>;
   getFlightSessionStatus(): Promise<FlightSessionStatus>;
   listFlightSessions(): Promise<FlightSessionSummary[]>;
+  saveFlightSessionProcessingResult(
+    sessionId: string,
+    transcript: string,
+    translation: string,
+    sourceLanguage: string,
+    targetLanguage: string,
+    cloudSessionId: string,
+    transcriptionModel: string,
+    translationModel: string
+  ): Promise<FlightSessionSummary>;
   testAlert(confirmed: boolean): Promise<{
     success: boolean;
     confirmed: boolean;
@@ -84,6 +94,26 @@ export const stopFlightSession = () => NativeModule.stopFlightSession();
 export const getFlightSessionStatus = () =>
   NativeModule.getFlightSessionStatus();
 export const listFlightSessions = () => NativeModule.listFlightSessions();
+export const saveFlightSessionProcessingResult = (
+  sessionId: string,
+  transcript: string,
+  translation: string,
+  sourceLanguage: string,
+  targetLanguage: string,
+  cloudSessionId: string,
+  transcriptionModel: string,
+  translationModel: string
+) =>
+  NativeModule.saveFlightSessionProcessingResult(
+    sessionId,
+    transcript,
+    translation,
+    sourceLanguage,
+    targetLanguage,
+    cloudSessionId,
+    transcriptionModel,
+    translationModel
+  );
 export const testAlert = (confirmed: boolean) =>
   NativeModule.testAlert(confirmed);
 
@@ -113,6 +143,7 @@ export default {
   stopFlightSession,
   getFlightSessionStatus,
   listFlightSessions,
+  saveFlightSessionProcessingResult,
   testAlert,
   addCallsignAlertListener,
   addTranscriptListener,
