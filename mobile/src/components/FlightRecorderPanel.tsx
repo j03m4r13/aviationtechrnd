@@ -40,6 +40,9 @@ type FlightSessionSummary = {
   eventCount: number;
 };
 
+type TranscriptUiState = 'not_processed' | 'queued';
+type TranslationUiState = 'waiting_for_transcript' | 'not_processed';
+
 const emptyStatus: FlightSessionStatus = {
   active: false,
   sessionId: null,
@@ -54,6 +57,10 @@ const emptyStatus: FlightSessionStatus = {
   eventCount: 0,
   message: null
 };
+
+function sessionKeyOf(session: FlightSessionSummary): string {
+  return session.sessionId ?? session.recordingFile ?? session.metadataFile ?? 'unknown';
+}
 
 function formatBytes(value: number | null): string {
   if (!value) return '0 B';
@@ -88,11 +95,37 @@ function toFileUri(path: string): string {
   return path.startsWith('file://') ? path : `file://${path}`;
 }
 
+function transcriptStatusText(status: TranscriptUiState): string {
+  switch (status) {
+    case 'queued':
+      return 'Queued locally - waiting for API processing';
+    case 'not_processed':
+    default:
+      return 'Not processed';
+  }
+}
+
+function translationStatusText(status: TranslationUiState): string {
+  switch (status) {
+    case 'not_processed':
+      return 'Not processed';
+    case 'waiting_for_transcript':
+    default:
+      return 'Waiting for transcript';
+  }
+}
+
 export function FlightRecorderPanel() {
   const [status, setStatus] = useState<FlightSessionStatus>(emptyStatus);
   const [sessions, setSessions] = useState<FlightSessionSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [playingSessionId, setPlayingSessionId] = useState<string | null>(null);
+  const [transcriptStates, setTranscriptStates] = useState<
+    Record<string, TranscriptUiState>
+  >({});
+  const [translationStates, setTranslationStates] = useState<
+    Record<string, TranslationUiState>
+  >({});
   const player = useAudioPlayer(null);
   const playbackStatus = useAudioPlayerStatus(player);
 
@@ -211,6 +244,46 @@ export function FlightRecorderPanel() {
     setPlayingSessionId(null);
   }
 
+  function queueTranscription(session: FlightSessionSummary) {
+    if (!session.recordingFile || !session.recordingExists) {
+      Alert.alert('Recording unavailable', 'The audio file was not found.');
+      return;
+    }
+
+    const key = sessionKeyOf(session);
+    setTranscriptStates((current) => ({
+      ...current,
+      [key]: 'queued'
+    }));
+    setTranslationStates((current) => ({
+      ...current,
+      [key]: 'waiting_for_transcript'
+    }));
+
+    Alert.alert(
+      'Transcription prepared',
+      'This recording is marked for post-flight transcription. The next patch will connect this button to the API upload/transcription job.'
+    );
+  }
+
+  function explainTranslation(session: FlightSessionSummary) {
+    const key = sessionKeyOf(session);
+    const transcriptState = transcriptStates[key] ?? 'not_processed';
+
+    if (transcriptState !== 'queued') {
+      Alert.alert(
+        'Transcript required first',
+        'Transcription must finish before this recording can be translated.'
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Translation waits for transcript',
+      'Translation will be enabled after the transcription job returns text for this recording.'
+    );
+  }
+
   useEffect(() => {
     void refreshAll();
   }, []);
@@ -229,7 +302,8 @@ export function FlightRecorderPanel() {
           <Text style={styles.title}>Flight Recorder</Text>
           <Text style={styles.help}>
             Records the full session while the local callsign monitor listens on
-            the same microphone stream.
+            the same microphone stream. Transcription and translation happen
+            after the flight when a connection is available.
           </Text>
         </View>
         <View style={[styles.statusPill, status.active && styles.statusPillActive]}>
@@ -311,8 +385,11 @@ export function FlightRecorderPanel() {
         </Text>
       ) : (
         sessions.map((session) => {
-          const sessionKey = session.sessionId ?? session.recordingFile ?? session.metadataFile ?? 'unknown';
+          const sessionKey = sessionKeyOf(session);
           const isPlaying = playingSessionId === (session.sessionId ?? session.recordingFile);
+          const transcriptState = transcriptStates[sessionKey] ?? 'not_processed';
+          const translationState =
+            translationStates[sessionKey] ?? 'waiting_for_transcript';
 
           return (
             <View key={sessionKey} style={styles.sessionBox}>
@@ -337,20 +414,55 @@ export function FlightRecorderPanel() {
                 </Text>
               </View>
 
+              <View style={styles.processingBox}>
+                <Text style={styles.processingTitle}>Post-flight processing</Text>
+                <Text style={styles.processingText}>
+                  Transcript: {transcriptStatusText(transcriptState)}
+                </Text>
+                <Text style={styles.processingText}>
+                  Translation: {translationStatusText(translationState)}
+                </Text>
+              </View>
+
               <View style={styles.sessionActions}>
                 <Pressable
                   disabled={!session.recordingExists || !session.recordingFile}
                   onPress={() => void playSession(session)}
                   style={({ pressed }) => [
+                    styles.actionButton,
                     styles.playButton,
                     isPlaying && styles.playButtonActive,
                     (!session.recordingExists || !session.recordingFile || pressed) &&
                       styles.buttonPressed
                   ]}
                 >
-                  <Text style={styles.playButtonText}>
-                    {isPlaying ? 'Replay' : 'Play Recording'}
+                  <Text style={styles.actionButtonText}>
+                    {isPlaying ? 'Replay' : 'Play'}
                   </Text>
+                </Pressable>
+
+                <Pressable
+                  disabled={!session.recordingExists || !session.recordingFile}
+                  onPress={() => queueTranscription(session)}
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    styles.transcribeButton,
+                    (!session.recordingExists || !session.recordingFile || pressed) &&
+                      styles.buttonPressed
+                  ]}
+                >
+                  <Text style={styles.actionButtonText}>Transcribe</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => explainTranslation(session)}
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    styles.translateButton,
+                    pressed && styles.buttonPressed
+                  ]}
+                >
+                  <Text style={styles.actionButtonText}>Translate</Text>
                 </Pressable>
               </View>
 
@@ -609,23 +721,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700'
   },
+  processingBox: {
+    backgroundColor: '#111827',
+    borderColor: '#293548',
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 4,
+    marginTop: 4,
+    padding: 10
+  },
+  processingTitle: {
+    color: '#dbeafe',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  processingText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    lineHeight: 17
+  },
   sessionActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 4
   },
-  playButton: {
+  actionButton: {
     alignItems: 'center',
-    backgroundColor: '#2563eb',
     borderRadius: 9,
     minHeight: 38,
     justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 9
   },
+  playButton: {
+    backgroundColor: '#2563eb'
+  },
   playButtonActive: {
     backgroundColor: '#1d4ed8'
   },
-  playButtonText: {
+  transcribeButton: {
+    backgroundColor: '#0f766e'
+  },
+  translateButton: {
+    backgroundColor: '#6d28d9'
+  },
+  actionButtonText: {
     color: '#eff6ff',
     fontSize: 12,
     fontWeight: '800'
