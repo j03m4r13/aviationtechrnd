@@ -134,6 +134,16 @@ class AviationCallsignMonitorModule : Module() {
       )
     }
 
+    AsyncFunction("shareFlightSessionFile") {
+      filePath: String,
+      mimeType: String,
+      title: String ->
+
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("React context is not available")
+      FlightSessionShare.shareFile(context, filePath, mimeType, title)
+    }
+
     AsyncFunction("testAlert") { confirmed: Boolean ->
       CallsignAlertTone.play(confirmed)
       mapOf(
