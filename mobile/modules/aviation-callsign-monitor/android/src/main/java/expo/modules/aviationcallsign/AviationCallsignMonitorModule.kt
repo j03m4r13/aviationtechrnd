@@ -109,6 +109,31 @@ class AviationCallsignMonitorModule : Module() {
       FlightSessionStore.listSessions(context)
     }
 
+    AsyncFunction("saveFlightSessionProcessingResult") {
+      sessionId: String,
+      transcript: String,
+      translation: String,
+      sourceLanguage: String,
+      targetLanguage: String,
+      cloudSessionId: String,
+      transcriptionModel: String,
+      translationModel: String ->
+
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("React context is not available")
+      FlightSessionStore.saveProcessingResult(
+        context = context,
+        sessionId = sessionId,
+        transcript = transcript,
+        translation = translation,
+        sourceLanguage = sourceLanguage,
+        targetLanguage = targetLanguage,
+        cloudSessionId = cloudSessionId,
+        transcriptionModel = transcriptionModel,
+        translationModel = translationModel
+      )
+    }
+
     AsyncFunction("testAlert") { confirmed: Boolean ->
       CallsignAlertTone.play(confirmed)
       mapOf(
