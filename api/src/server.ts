@@ -27,6 +27,9 @@ const ALLOWED_AUDIO_TYPES = new Set([
   'audio/aac',
   'audio/mpeg',
   'audio/wav',
+  'audio/x-wav',
+  'audio/wave',
+  'audio/vnd.wave',
   'audio/webm',
   'application/octet-stream'
 ]);
@@ -141,7 +144,7 @@ app.post('/v1/audio/process', async (request, reply) => {
         }
 
         filename = part.filename || filename;
-        mimeType = part.mimetype || mimeType;
+        mimeType = normalizeAudioMimeType(part.mimetype || mimeType);
         if (!ALLOWED_AUDIO_TYPES.has(mimeType)) {
           part.file.resume();
           return reply.code(415).send({
@@ -335,6 +338,18 @@ app.post('/v1/audio/process', async (request, reply) => {
     return sendKnownError(reply, error, 502, 'audio_processing_failed');
   }
 });
+
+function normalizeAudioMimeType(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (
+    normalized === 'audio/x-wav' ||
+    normalized === 'audio/wave' ||
+    normalized === 'audio/vnd.wave'
+  ) {
+    return 'audio/wav';
+  }
+  return normalized;
+}
 
 function sendKnownError(
   reply: FastifyReply,
