@@ -8,6 +8,7 @@ import {
 } from 'expo-audio';
 
 import AviationCallsignMonitor from '../../modules/aviation-callsign-monitor';
+import { processAudio } from '../services/audio-processing-api';
 
 type FlightSessionStatus = {
   active: boolean;
@@ -40,8 +41,27 @@ type FlightSessionSummary = {
   eventCount: number;
 };
 
-type TranscriptUiState = 'not_processed' | 'queued';
-type TranslationUiState = 'waiting_for_transcript' | 'not_processed';
+type TranscriptUiState =
+  | 'not_processed'
+  | 'uploading'
+  | 'completed'
+  | 'failed';
+type TranslationUiState =
+  | 'waiting_for_transcript'
+  | 'completed'
+  | 'failed';
+
+type FlightProcessingResult = {
+  transcript: string;
+  translation: string;
+  cloudSessionId: string;
+  transcriptionModel: string;
+  translationModel: string;
+  errorMessage?: string;
+};
+
+const SOURCE_LANGUAGE = 'en';
+const TARGET_LANGUAGE = 'tl';
 
 const emptyStatus: FlightSessionStatus = {
   active: false,
@@ -95,10 +115,30 @@ function toFileUri(path: string): string {
   return path.startsWith('file://') ? path : `file://${path}`;
 }
 
+function durationForUpload(session: FlightSessionSummary): number {
+  if (session.recordingDurationMs && session.recordingDurationMs > 0) {
+    return session.recordingDurationMs;
+  }
+
+  if (
+    session.startedAtEpochMs &&
+    session.endedAtEpochMs &&
+    session.endedAtEpochMs > session.startedAtEpochMs
+  ) {
+    return session.endedAtEpochMs - session.startedAtEpochMs;
+  }
+
+  return 1000;
+}
+
 function transcriptStatusText(status: TranscriptUiState): string {
   switch (status) {
-    case 'queued':
-      return 'Queued locally - waiting for API processing';
+    case 'uploading':
+      return 'Uploading and processing after flight';
+    case 'completed':
+      return 'Completed';
+    case 'failed':
+      return 'Failed - retry available';
     case 'not_processed':
     default:
       return 'Not processed';
@@ -107,8 +147,10 @@ function transcriptStatusText(status: TranscriptUiState): string {
 
 function translationStatusText(status: TranslationUiState): string {
   switch (status) {
-    case 'not_processed':
-      return 'Not processed';
+    case 'completed':
+      return 'Completed';
+    case 'failed':
+      return 'Failed';
     case 'waiting_for_transcript':
     default:
       return 'Waiting for transcript';
@@ -125,6 +167,9 @@ export function FlightRecorderPanel() {
   >({});
   const [translationStates, setTranslationStates] = useState<
     Record<string, TranslationUiState>
+  >({});
+  const [processingResults, setProcessingResults] = useState<
+    Record<string, FlightProcessingResult>
   >({});
   const player = useAudioPlayer(null);
   const playbackStatus = useAudioPlayerStatus(player);
@@ -244,44 +289,98 @@ export function FlightRecorderPanel() {
     setPlayingSessionId(null);
   }
 
-  function queueTranscription(session: FlightSessionSummary) {
+  async function transcribeSession(session: FlightSessionSummary) {
     if (!session.recordingFile || !session.recordingExists) {
       Alert.alert('Recording unavailable', 'The audio file was not found.');
       return;
     }
 
     const key = sessionKeyOf(session);
-    setTranscriptStates((current) => ({
-      ...current,
-      [key]: 'queued'
-    }));
-    setTranslationStates((current) => ({
-      ...current,
-      [key]: 'waiting_for_transcript'
-    }));
+    const durationMs = durationForUpload(session);
 
-    Alert.alert(
-      'Transcription prepared',
-      'This recording is marked for post-flight transcription. The next patch will connect this button to the API upload/transcription job.'
-    );
+    try {
+      setTranscriptStates((current) => ({
+        ...current,
+        [key]: 'uploading'
+      }));
+      setTranslationStates((current) => ({
+        ...current,
+        [key]: 'waiting_for_transcript'
+      }));
+      setProcessingResults((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+
+      const response = await processAudio({
+        uri: toFileUri(session.recordingFile),
+        localSessionId: key,
+        createdAt: new Date(session.startedAtEpochMs || Date.now()).toISOString(),
+        durationMs,
+        sourceLanguage: SOURCE_LANGUAGE,
+        targetLanguage: TARGET_LANGUAGE,
+        inputName: 'Flight Recorder',
+        inputType: 'shared-audio-frame',
+        idempotencyKey: `flight-transcribe-${key}`
+      });
+
+      setTranscriptStates((current) => ({
+        ...current,
+        [key]: 'completed'
+      }));
+      setTranslationStates((current) => ({
+        ...current,
+        [key]: 'completed'
+      }));
+      setProcessingResults((current) => ({
+        ...current,
+        [key]: {
+          transcript: response.transcript,
+          translation: response.translation,
+          cloudSessionId: response.cloudSessionId,
+          transcriptionModel: response.models.transcription,
+          translationModel: response.models.translation
+        }
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTranscriptStates((current) => ({
+        ...current,
+        [key]: 'failed'
+      }));
+      setTranslationStates((current) => ({
+        ...current,
+        [key]: 'failed'
+      }));
+      setProcessingResults((current) => ({
+        ...current,
+        [key]: {
+          transcript: '',
+          translation: '',
+          cloudSessionId: '',
+          transcriptionModel: '',
+          translationModel: '',
+          errorMessage: message
+        }
+      }));
+      Alert.alert('Transcription failed', message);
+    }
   }
 
   function explainTranslation(session: FlightSessionSummary) {
     const key = sessionKeyOf(session);
-    const transcriptState = transcriptStates[key] ?? 'not_processed';
+    const result = processingResults[key];
 
-    if (transcriptState !== 'queued') {
+    if (!result || !result.translation) {
       Alert.alert(
         'Transcript required first',
-        'Transcription must finish before this recording can be translated.'
+        'Press Transcribe first. Translation is returned after the post-flight transcription job completes.'
       );
       return;
     }
 
-    Alert.alert(
-      'Translation waits for transcript',
-      'Translation will be enabled after the transcription job returns text for this recording.'
-    );
+    Alert.alert('Translation', result.translation);
   }
 
   useEffect(() => {
@@ -390,6 +489,8 @@ export function FlightRecorderPanel() {
           const transcriptState = transcriptStates[sessionKey] ?? 'not_processed';
           const translationState =
             translationStates[sessionKey] ?? 'waiting_for_transcript';
+          const processingResult = processingResults[sessionKey];
+          const isProcessing = transcriptState === 'uploading';
 
           return (
             <View key={sessionKey} style={styles.sessionBox}>
@@ -422,17 +523,20 @@ export function FlightRecorderPanel() {
                 <Text style={styles.processingText}>
                   Translation: {translationStatusText(translationState)}
                 </Text>
+                {processingResult?.errorMessage ? (
+                  <Text style={styles.errorText}>{processingResult.errorMessage}</Text>
+                ) : null}
               </View>
 
               <View style={styles.sessionActions}>
                 <Pressable
-                  disabled={!session.recordingExists || !session.recordingFile}
+                  disabled={!session.recordingExists || !session.recordingFile || isProcessing}
                   onPress={() => void playSession(session)}
                   style={({ pressed }) => [
                     styles.actionButton,
                     styles.playButton,
                     isPlaying && styles.playButtonActive,
-                    (!session.recordingExists || !session.recordingFile || pressed) &&
+                    (!session.recordingExists || !session.recordingFile || isProcessing || pressed) &&
                       styles.buttonPressed
                   ]}
                 >
@@ -442,16 +546,18 @@ export function FlightRecorderPanel() {
                 </Pressable>
 
                 <Pressable
-                  disabled={!session.recordingExists || !session.recordingFile}
-                  onPress={() => queueTranscription(session)}
+                  disabled={!session.recordingExists || !session.recordingFile || isProcessing}
+                  onPress={() => void transcribeSession(session)}
                   style={({ pressed }) => [
                     styles.actionButton,
                     styles.transcribeButton,
-                    (!session.recordingExists || !session.recordingFile || pressed) &&
+                    (!session.recordingExists || !session.recordingFile || isProcessing || pressed) &&
                       styles.buttonPressed
                   ]}
                 >
-                  <Text style={styles.actionButtonText}>Transcribe</Text>
+                  <Text style={styles.actionButtonText}>
+                    {isProcessing ? 'Processing…' : 'Transcribe'}
+                  </Text>
                 </Pressable>
 
                 <Pressable
@@ -465,6 +571,27 @@ export function FlightRecorderPanel() {
                   <Text style={styles.actionButtonText}>Translate</Text>
                 </Pressable>
               </View>
+
+              {processingResult?.transcript ? (
+                <View style={styles.resultBox}>
+                  <Text style={styles.resultTitle}>Transcript</Text>
+                  <Text selectable numberOfLines={6} style={styles.resultText}>
+                    {processingResult.transcript}
+                  </Text>
+                  <Text style={styles.modelText}>
+                    {processingResult.transcriptionModel} → {processingResult.translationModel}
+                  </Text>
+                </View>
+              ) : null}
+
+              {processingResult?.translation ? (
+                <View style={styles.resultBox}>
+                  <Text style={styles.resultTitle}>Translation</Text>
+                  <Text selectable numberOfLines={6} style={styles.resultText}>
+                    {processingResult.translation}
+                  </Text>
+                </View>
+              ) : null}
 
               {session.recordingFile ? (
                 <Text numberOfLines={2} style={styles.pathText}>
@@ -740,6 +867,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17
   },
+  errorText: {
+    color: '#fca5a5',
+    fontSize: 12,
+    lineHeight: 17
+  },
   sessionActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -770,6 +902,30 @@ const styles = StyleSheet.create({
     color: '#eff6ff',
     fontSize: 12,
     fontWeight: '800'
+  },
+  resultBox: {
+    backgroundColor: '#101826',
+    borderColor: '#334155',
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 5,
+    marginTop: 4,
+    padding: 10
+  },
+  resultTitle: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  resultText: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    lineHeight: 18
+  },
+  modelText: {
+    color: '#64748b',
+    fontSize: 11,
+    lineHeight: 15
   },
   pathText: {
     color: '#64748b',
