@@ -6,6 +6,7 @@ import AviationCallsignMonitor from '../../modules/aviation-callsign-monitor';
 
 type FlightSessionStatus = {
   active: boolean;
+  ownerUserId?: string | null;
   sessionId: string | null;
   recordingFile: string | null;
   recordingContainer: string | null;
@@ -19,8 +20,13 @@ type FlightSessionStatus = {
   message?: string | null;
 };
 
+type FlightSessionTestPanelProps = {
+  ownerUserId: string;
+};
+
 const emptyStatus: FlightSessionStatus = {
   active: false,
+  ownerUserId: null,
   sessionId: null,
   recordingFile: null,
   recordingContainer: null,
@@ -46,7 +52,7 @@ function formatDuration(value: number | null): string {
   return `${Math.round(value / 1000)}s`;
 }
 
-export function FlightSessionTestPanel() {
+export function FlightSessionTestPanel({ ownerUserId }: FlightSessionTestPanelProps) {
   const [status, setStatus] = useState<FlightSessionStatus>(emptyStatus);
   const [busy, setBusy] = useState(false);
 
@@ -90,7 +96,7 @@ export function FlightSessionTestPanel() {
         return;
       }
 
-      const next = await AviationCallsignMonitor.startFlightSession();
+      const next = await AviationCallsignMonitor.startFlightSession(ownerUserId);
       setStatus(next as FlightSessionStatus);
     } catch (error) {
       Alert.alert(
@@ -198,20 +204,20 @@ export function FlightSessionTestPanel() {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#111923',
-    borderColor: '#293347',
-    borderRadius: 14,
+    borderColor: '#334155',
+    borderRadius: 16,
     borderWidth: 1,
-    gap: 9,
-    padding: 14
+    gap: 12,
+    padding: 16
   },
   title: {
-    color: '#f0f4f9',
-    fontSize: 17,
+    color: '#f8fafc',
+    fontSize: 18,
     fontWeight: '800'
   },
   help: {
     color: '#9dacbf',
-    fontSize: 12,
+    fontSize: 13,
     lineHeight: 18
   },
   row: {
@@ -226,7 +232,7 @@ const styles = StyleSheet.create({
     width: 10
   },
   statusDotActive: {
-    backgroundColor: '#22c55e'
+    backgroundColor: '#ef4444'
   },
   statusText: {
     color: '#e2e8f0',
@@ -237,47 +243,46 @@ const styles = StyleSheet.create({
     fontSize: 12
   },
   path: {
-    color: '#74839a',
+    color: '#64748b',
     fontSize: 11,
     lineHeight: 16
   },
   buttonRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 4
+    gap: 10
   },
   button: {
     alignItems: 'center',
     backgroundColor: '#2563eb',
     borderRadius: 10,
     flex: 1,
+    minHeight: 42,
     justifyContent: 'center',
-    minHeight: 44,
-    paddingHorizontal: 10
+    paddingHorizontal: 12,
+    paddingVertical: 10
   },
   stopButton: {
-    backgroundColor: '#991b1b',
-    flex: 0.55
+    backgroundColor: '#991b1b'
+  },
+  buttonText: {
+    color: '#eff6ff',
+    fontSize: 13,
+    fontWeight: '800'
   },
   buttonPressed: {
     opacity: 0.55
   },
-  buttonText: {
-    color: '#eff6ff',
-    fontSize: 12,
-    fontWeight: '800',
-    textAlign: 'center'
-  },
   refreshButton: {
-    alignItems: 'center',
-    borderColor: '#334155',
+    borderColor: '#3b82f6',
     borderRadius: 10,
     borderWidth: 1,
+    paddingHorizontal: 12,
     paddingVertical: 10
   },
   refreshText: {
     color: '#93c5fd',
-    fontSize: 12,
-    fontWeight: '700'
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'center'
   }
 });
