@@ -13,6 +13,18 @@ import type {
   FlightSessionSummary
 } from './FlightSession.types';
 
+type FlightProcessingPayload = {
+  ownerUserId: string;
+  sessionId: string;
+  transcript: string;
+  translation: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  cloudSessionId: string;
+  transcriptionModel: string;
+  translationModel: string;
+};
+
 type NativeCallsignModule = {
   initialize(
     callsign: string,
@@ -28,15 +40,7 @@ type NativeCallsignModule = {
   getFlightSessionStatus(): Promise<FlightSessionStatus>;
   listFlightSessions(ownerUserId: string): Promise<FlightSessionSummary[]>;
   saveFlightSessionProcessingResult(
-    ownerUserId: string,
-    sessionId: string,
-    transcript: string,
-    translation: string,
-    sourceLanguage: string,
-    targetLanguage: string,
-    cloudSessionId: string,
-    transcriptionModel: string,
-    translationModel: string
+    payload: FlightProcessingPayload
   ): Promise<FlightSessionSummary>;
   testAlert(confirmed: boolean): Promise<{
     success: boolean;
@@ -108,7 +112,7 @@ export const saveFlightSessionProcessingResult = (
   transcriptionModel: string,
   translationModel: string
 ) =>
-  NativeModule.saveFlightSessionProcessingResult(
+  NativeModule.saveFlightSessionProcessingResult({
     ownerUserId,
     sessionId,
     transcript,
@@ -118,7 +122,7 @@ export const saveFlightSessionProcessingResult = (
     cloudSessionId,
     transcriptionModel,
     translationModel
-  );
+  });
 export const testAlert = (confirmed: boolean) =>
   NativeModule.testAlert(confirmed);
 
