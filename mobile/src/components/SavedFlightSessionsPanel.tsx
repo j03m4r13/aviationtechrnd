@@ -24,6 +24,10 @@ type FlightSessionSummary = {
   eventCount: number;
 };
 
+type SavedFlightSessionsPanelProps = {
+  ownerUserId: string;
+};
+
 function formatBytes(value: number | null): string {
   if (!value) return '0 B';
   if (value < 1024) return `${value} B`;
@@ -57,7 +61,7 @@ function toFileUri(path: string): string {
   return path.startsWith('file://') ? path : `file://${path}`;
 }
 
-export function SavedFlightSessionsPanel() {
+export function SavedFlightSessionsPanel({ ownerUserId }: SavedFlightSessionsPanelProps) {
   const [sessions, setSessions] = useState<FlightSessionSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [playingSessionId, setPlayingSessionId] = useState<string | null>(null);
@@ -67,7 +71,7 @@ export function SavedFlightSessionsPanel() {
   async function refresh() {
     try {
       setBusy(true);
-      const next = await AviationCallsignMonitor.listFlightSessions();
+      const next = await AviationCallsignMonitor.listFlightSessions(ownerUserId);
       setSessions(next as FlightSessionSummary[]);
     } catch (error) {
       Alert.alert(
@@ -112,7 +116,7 @@ export function SavedFlightSessionsPanel() {
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [ownerUserId]);
 
   useEffect(() => {
     if (playbackStatus.didJustFinish) {
@@ -126,7 +130,7 @@ export function SavedFlightSessionsPanel() {
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Saved flight sessions</Text>
           <Text style={styles.help}>
-            Local recordings and callsign metadata saved on this device.
+            Local recordings and callsign metadata saved on this device for the signed-in user.
           </Text>
         </View>
         <Pressable
@@ -155,7 +159,7 @@ export function SavedFlightSessionsPanel() {
 
       {sessions.length === 0 ? (
         <Text style={styles.emptyText}>
-          No saved sessions yet. Start and stop a flight session first.
+          No saved sessions for this signed-in user yet.
         </Text>
       ) : (
         sessions.map((session) => {
@@ -220,32 +224,32 @@ export function SavedFlightSessionsPanel() {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#111827',
+    backgroundColor: '#0f172a',
     borderColor: '#334155',
-    borderRadius: 14,
+    borderRadius: 18,
     borderWidth: 1,
-    gap: 12,
-    padding: 14
+    gap: 14,
+    padding: 16
   },
   headerRow: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'space-between'
   },
   headerCopy: {
     flex: 1,
-    gap: 4
+    gap: 5
   },
   title: {
     color: '#f8fafc',
-    fontSize: 17,
-    fontWeight: '800'
+    fontSize: 18,
+    fontWeight: '900'
   },
   help: {
     color: '#94a3b8',
     fontSize: 12,
-    lineHeight: 17
+    lineHeight: 18
   },
   refreshButton: {
     borderColor: '#3b82f6',
@@ -300,7 +304,7 @@ const styles = StyleSheet.create({
     borderColor: '#1e293b',
     borderRadius: 12,
     borderWidth: 1,
-    gap: 6,
+    gap: 7,
     padding: 12
   },
   sessionTitle: {
