@@ -37,7 +37,7 @@ internal class FlightSessionEngine(
     val format = RecordingFormat.productionAac(
       sampleRate = 16_000,
       channelCount = 1,
-      bitRate = 64_000
+      bitRate = 24_000
     )
 
     events.clear()
