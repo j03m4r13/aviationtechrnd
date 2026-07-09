@@ -7,20 +7,26 @@ import java.io.File
 internal object FlightSessionStore {
   private const val sessionsDirectoryName = "flight-sessions"
 
-  fun listSessions(context: Context): List<Map<String, Any?>> {
-    val root = File(context.filesDir, sessionsDirectoryName)
+  fun sessionDirectory(context: Context, ownerUserId: String, sessionId: String): File =
+    File(ownerDirectory(context, ownerUserId), sessionId)
+
+  fun listSessions(context: Context, ownerUserId: String): List<Map<String, Any?>> {
+    require(ownerUserId.isNotBlank()) { "ownerUserId is required" }
+
+    val root = ownerDirectory(context, ownerUserId)
     if (!root.exists() || !root.isDirectory) return emptyList()
 
     return root
       .listFiles()
       .orEmpty()
       .filter { it.isDirectory }
-      .mapNotNull { directory -> summarizeSessionDirectory(directory) }
+      .mapNotNull { directory -> summarizeSessionDirectory(directory, ownerUserId) }
       .sortedByDescending { it["startedAtEpochMs"] as? Long ?: 0L }
   }
 
   fun saveProcessingResult(
     context: Context,
+    ownerUserId: String,
     sessionId: String,
     transcript: String,
     translation: String,
@@ -30,14 +36,17 @@ internal object FlightSessionStore {
     transcriptionModel: String,
     translationModel: String
   ): Map<String, Any?> {
-    val directory = findSessionDirectory(context, sessionId)
-      ?: throw IllegalArgumentException("Flight session was not found: $sessionId")
+    require(ownerUserId.isNotBlank()) { "ownerUserId is required" }
+
+    val directory = findSessionDirectory(context, ownerUserId, sessionId)
+      ?: throw IllegalArgumentException("Flight session was not found for this user: $sessionId")
 
     val transcriptFile = File(directory, "$sessionId.transcript.json")
     val translationFile = File(directory, "$sessionId.translation.json")
     val now = System.currentTimeMillis()
 
     val transcriptJson = JSONObject()
+      .put("ownerUserId", ownerUserId)
       .put("sessionId", sessionId)
       .put("createdAtEpochMs", now)
       .put("status", "completed")
@@ -47,6 +56,7 @@ internal object FlightSessionStore {
       .put("text", transcript)
 
     val translationJson = JSONObject()
+      .put("ownerUserId", ownerUserId)
       .put("sessionId", sessionId)
       .put("createdAtEpochMs", now)
       .put("status", "completed")
@@ -59,11 +69,24 @@ internal object FlightSessionStore {
     transcriptFile.writeText(transcriptJson.toString(2), Charsets.UTF_8)
     translationFile.writeText(translationJson.toString(2), Charsets.UTF_8)
 
-    return summarizeSessionDirectory(directory)
+    return summarizeSessionDirectory(directory, ownerUserId)
       ?: throw IllegalStateException("Saved processing result, but session summary could not be read.")
   }
 
-  private fun summarizeSessionDirectory(directory: File): Map<String, Any?>? {
+  fun isOwnedFile(context: Context, ownerUserId: String, filePath: String): Boolean {
+    require(ownerUserId.isNotBlank()) { "ownerUserId is required" }
+    val root = ownerDirectory(context, ownerUserId).canonicalFile
+    val file = File(filePath).canonicalFile
+    return file.path == root.path || file.path.startsWith(root.path + File.separator)
+  }
+
+  private fun ownerDirectory(context: Context, ownerUserId: String): File =
+    File(File(context.filesDir, sessionsDirectoryName), safeOwnerSegment(ownerUserId))
+
+  private fun safeOwnerSegment(ownerUserId: String): String =
+    ownerUserId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+  private fun summarizeSessionDirectory(directory: File, ownerUserId: String): Map<String, Any?>? {
     val metadataFile = directory
       .listFiles()
       .orEmpty()
@@ -77,6 +100,9 @@ internal object FlightSessionStore {
     val metadata = runCatching {
       JSONObject(metadataFile.readText(Charsets.UTF_8))
     }.getOrNull() ?: return null
+
+    val storedOwnerUserId = metadata.optString("ownerUserId", "")
+    if (storedOwnerUserId != ownerUserId) return null
 
     val sessionId = metadata.optString("sessionId", directory.name)
     val startedAtEpochMs = metadata.optLong("startedAtEpochMs", 0L)
@@ -96,10 +122,11 @@ internal object FlightSessionStore {
       .takeIf { it.exists() }
     val translationFile = File(directory, "$sessionId.translation.json")
       .takeIf { it.exists() }
-    val transcript = transcriptFile?.readJsonOrNull()
-    val translation = translationFile?.readJsonOrNull()
+    val transcript = transcriptFile?.readOwnedJsonOrNull(ownerUserId)
+    val translation = translationFile?.readOwnedJsonOrNull(ownerUserId)
 
     return mapOf(
+      "ownerUserId" to ownerUserId,
       "sessionId" to sessionId,
       "startedAtEpochMs" to startedAtEpochMs,
       "endedAtEpochMs" to endedAtEpochMs,
@@ -129,24 +156,21 @@ internal object FlightSessionStore {
     )
   }
 
-  private fun findSessionDirectory(context: Context, sessionId: String): File? {
-    val root = File(context.filesDir, sessionsDirectoryName)
+  private fun findSessionDirectory(context: Context, ownerUserId: String, sessionId: String): File? {
+    val root = ownerDirectory(context, ownerUserId)
     if (!root.exists() || !root.isDirectory) return null
 
     return root
       .listFiles()
       .orEmpty()
-      .firstOrNull { it.isDirectory && it.name == sessionId }
-      ?: root
-        .listFiles()
-        .orEmpty()
-        .firstOrNull { directory ->
-          directory.isDirectory && summarizeSessionDirectory(directory)?.get("sessionId") == sessionId
-        }
+      .firstOrNull { directory ->
+        directory.isDirectory && summarizeSessionDirectory(directory, ownerUserId)?.get("sessionId") == sessionId
+      }
   }
 
-  private fun File.readJsonOrNull(): JSONObject? = runCatching {
-    JSONObject(readText(Charsets.UTF_8))
+  private fun File.readOwnedJsonOrNull(ownerUserId: String): JSONObject? = runCatching {
+    val json = JSONObject(readText(Charsets.UTF_8))
+    if (json.optString("ownerUserId", "") == ownerUserId) json else null
   }.getOrNull()
 
   private fun JSONObject.optLongOrNull(name: String): Long? =
