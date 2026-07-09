@@ -15,6 +15,7 @@ import { FlightRecorderPanel } from './components/FlightRecorderPanel';
 
 const topInset =
   Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 12 : 22;
+const SHOW_DEVELOPER_TOOLS = false;
 
 type CallsignMonitorAppProps = {
   ownerUserId: string;
@@ -39,8 +40,13 @@ export function CallsignMonitorApp({ ownerUserId }: CallsignMonitorAppProps) {
 
         <CallsignMonitorPanel />
         <FlightRecorderPanel ownerUserId={ownerUserId} />
-        <CallsignAlertTestPanel />
-        <CallsignRecognizerDiagnostics />
+
+        {SHOW_DEVELOPER_TOOLS ? (
+          <>
+            <CallsignAlertTestPanel />
+            <CallsignRecognizerDiagnostics />
+          </>
+        ) : null}
 
         <View style={styles.notice}>
           <Text style={styles.noticeTitle}>Operational limitation</Text>
