@@ -16,17 +16,23 @@ internal class FlightSessionEngine(
   private val events = mutableListOf<FlightCallsignEvent>()
 
   @Volatile private var active = false
+  @Volatile private var ownerUserId: String? = null
   @Volatile private var sessionId: String? = null
   @Volatile private var startedAtEpochMs: Long = 0L
   @Volatile private var recordingInfo: RecordingFileInfo? = null
   @Volatile private var metadataFile: File? = null
 
   @Synchronized
-  fun start(): Map<String, Any?> {
+  fun start(ownerUserId: String): Map<String, Any?> {
     check(!active) { "Flight session is already running" }
+    require(ownerUserId.isNotBlank()) { "ownerUserId is required" }
 
     val newSessionId = createSessionId()
-    val sessionDirectory = File(context.filesDir, "flight-sessions/$newSessionId")
+    val sessionDirectory = FlightSessionStore.sessionDirectory(
+      context = context,
+      ownerUserId = ownerUserId,
+      sessionId = newSessionId
+    )
     val writer = WavFlightRecordingWriter()
     val format = RecordingFormat.debugWav(
       sampleRate = 16_000,
@@ -34,6 +40,7 @@ internal class FlightSessionEngine(
     )
 
     events.clear()
+    this.ownerUserId = ownerUserId
     startedAtEpochMs = System.currentTimeMillis()
     sessionId = newSessionId
     metadataFile = File(sessionDirectory, "$newSessionId.json")
@@ -61,6 +68,7 @@ internal class FlightSessionEngine(
     recordingInfo = stoppedRecording ?: recordingInfo
 
     val metadata = FlightSessionMetadata(
+      ownerUserId = ownerUserId.orEmpty(),
       sessionId = sessionId.orEmpty(),
       startedAtEpochMs = startedAtEpochMs,
       endedAtEpochMs = endedAtEpochMs,
@@ -104,6 +112,7 @@ internal class FlightSessionEngine(
 
     return mapOf(
       "active" to active,
+      "ownerUserId" to ownerUserId,
       "sessionId" to currentSessionId,
       "recordingFile" to info?.file?.absolutePath,
       "recordingContainer" to info?.format?.container?.name?.lowercase(),
