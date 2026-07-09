@@ -17,7 +17,11 @@ import { FlightSessionExportPanel } from './components/FlightSessionExportPanel'
 const topInset =
   Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 12 : 22;
 
-export function CallsignMonitorApp() {
+type CallsignMonitorAppProps = {
+  ownerUserId: string;
+};
+
+export function CallsignMonitorApp({ ownerUserId }: CallsignMonitorAppProps) {
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
@@ -35,8 +39,8 @@ export function CallsignMonitorApp() {
         </View>
 
         <CallsignMonitorPanel />
-        <FlightRecorderPanel />
-        <FlightSessionExportPanel />
+        <FlightRecorderPanel ownerUserId={ownerUserId} />
+        <FlightSessionExportPanel ownerUserId={ownerUserId} />
         <CallsignAlertTestPanel />
         <CallsignRecognizerDiagnostics />
 
