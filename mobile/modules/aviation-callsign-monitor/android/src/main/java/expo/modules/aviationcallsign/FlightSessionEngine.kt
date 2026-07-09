@@ -33,10 +33,11 @@ internal class FlightSessionEngine(
       ownerUserId = ownerUserId,
       sessionId = newSessionId
     )
-    val writer = WavFlightRecordingWriter()
-    val format = RecordingFormat.debugWav(
+    val writer = AacFlightRecordingWriter()
+    val format = RecordingFormat.productionAac(
       sampleRate = 16_000,
-      channelCount = 1
+      channelCount = 1,
+      bitRate = 64_000
     )
 
     events.clear()
