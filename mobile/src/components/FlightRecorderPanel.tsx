@@ -1,3 +1,4 @@
+import { requireNativeModule } from 'expo-modules-core';
 import { useEffect, useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
@@ -54,10 +55,20 @@ type ProcessingResult = {
   error?: string;
 };
 
+type NativeShareModule = {
+  shareFlightSessionFile(
+    ownerUserId: string,
+    filePath: string,
+    mimeType: string,
+    title: string
+  ): Promise<{ success: boolean }>;
+};
+
 type FlightRecorderPanelProps = {
   ownerUserId: string;
 };
 
+const NativeShare = requireNativeModule<NativeShareModule>('AviationCallsignMonitor');
 const SOURCE_LANGUAGE = 'en';
 const TARGET_LANGUAGE = 'tl';
 const emptyStatus: FlightSessionStatus = {
@@ -310,6 +321,19 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
     }
   }
 
+  async function exportFile(filePath: string | null | undefined, mimeType: string, title: string) {
+    if (!filePath) {
+      Alert.alert('Nothing to export', 'This file is not available yet.');
+      return;
+    }
+
+    try {
+      await NativeShare.shareFlightSessionFile(ownerUserId, filePath, mimeType, title);
+    } catch (error) {
+      Alert.alert('Export failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+
   function showTranslation(session: FlightSessionSummary) {
     const result = processingResults[sessionKey(session)] ?? savedResult(session);
     if (!result?.translation) {
@@ -334,7 +358,7 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
           <Text style={styles.eyebrow}>LOCAL FLIGHT AUDIO</Text>
           <Text style={styles.title}>Flight Recorder</Text>
           <Text style={styles.help}>
-            Records locally during flight. Transcription and translation happen after the flight when a connection is available.
+            Records locally during flight. Transcription, translation, and exports happen after the flight.
           </Text>
         </View>
         <View style={[styles.statusPill, status.active && styles.statusPillActive]}>
@@ -384,6 +408,7 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
           const isPlaying = playingSessionId === (session.sessionId ?? session.recordingFile);
           const transcriptLabel = state === 'uploading' ? 'Uploading and processing' : state === 'completed' ? 'Completed and saved locally' : state === 'failed' ? 'Failed - retry available' : 'Not processed';
           const translationLabel = result?.translation ? 'Completed and saved locally' : 'Waiting for transcript';
+          const title = session.sessionId ?? 'Flight session';
 
           return (
             <View key={key} style={styles.sessionBox}>
@@ -420,6 +445,21 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
                 </Pressable>
                 <Pressable onPress={() => showTranslation(session)} style={({ pressed }) => [styles.actionButton, styles.translateButton, pressed && styles.buttonPressed]}>
                   <Text style={styles.actionButtonText}>Translate</Text>
+                </Pressable>
+              </View>
+
+              <View style={styles.sessionActions}>
+                <Pressable disabled={!session.recordingFile || !session.recordingExists} onPress={() => void exportFile(session.recordingFile, 'audio/wav', `Export audio - ${title}`)} style={({ pressed }) => [styles.actionButton, styles.exportButton, (!session.recordingFile || !session.recordingExists || pressed) && styles.buttonPressed]}>
+                  <Text style={styles.actionButtonText}>Export Audio</Text>
+                </Pressable>
+                <Pressable disabled={!session.metadataFile} onPress={() => void exportFile(session.metadataFile, 'application/json', `Export metadata - ${title}`)} style={({ pressed }) => [styles.actionButton, styles.exportButton, (!session.metadataFile || pressed) && styles.buttonPressed]}>
+                  <Text style={styles.actionButtonText}>Export Metadata</Text>
+                </Pressable>
+                <Pressable disabled={!session.transcriptFile} onPress={() => void exportFile(session.transcriptFile, 'application/json', `Export transcript - ${title}`)} style={({ pressed }) => [styles.actionButton, styles.exportButton, (!session.transcriptFile || pressed) && styles.buttonPressed]}>
+                  <Text style={styles.actionButtonText}>Export Transcript</Text>
+                </Pressable>
+                <Pressable disabled={!session.translationFile} onPress={() => void exportFile(session.translationFile, 'application/json', `Export translation - ${title}`)} style={({ pressed }) => [styles.actionButton, styles.exportButton, (!session.translationFile || pressed) && styles.buttonPressed]}>
+                  <Text style={styles.actionButtonText}>Export Translation</Text>
                 </Pressable>
               </View>
 
@@ -502,6 +542,7 @@ const styles = StyleSheet.create({
   playButtonActive: { backgroundColor: '#1d4ed8' },
   transcribeButton: { backgroundColor: '#0f766e' },
   translateButton: { backgroundColor: '#6d28d9' },
+  exportButton: { backgroundColor: '#475569' },
   actionButtonText: { color: '#eff6ff', fontSize: 12, fontWeight: '800' },
   resultBox: { backgroundColor: '#101826', borderColor: '#334155', borderRadius: 10, borderWidth: 1, gap: 5, marginTop: 4, padding: 10 },
   resultTitle: { color: '#e2e8f0', fontSize: 12, fontWeight: '900' },
