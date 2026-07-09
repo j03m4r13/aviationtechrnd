@@ -23,11 +23,12 @@ type NativeCallsignModule = {
   startMonitoring(): Promise<CallsignMonitorStatus>;
   stopMonitoring(): Promise<CallsignMonitorStatus>;
   setCallsign(callsign: string, aliases: string[]): Promise<CallsignMonitorStatus>;
-  startFlightSession(): Promise<FlightSessionStatus>;
+  startFlightSession(ownerUserId: string): Promise<FlightSessionStatus>;
   stopFlightSession(): Promise<FlightSessionStatus>;
   getFlightSessionStatus(): Promise<FlightSessionStatus>;
-  listFlightSessions(): Promise<FlightSessionSummary[]>;
+  listFlightSessions(ownerUserId: string): Promise<FlightSessionSummary[]>;
   saveFlightSessionProcessingResult(
+    ownerUserId: string,
     sessionId: string,
     transcript: string,
     translation: string,
@@ -89,12 +90,15 @@ export const stopMonitoring = () => NativeModule.stopMonitoring();
 export const getStatus = () => NativeModule.getStatus();
 export const setCallsign = (callsign: string, aliases: string[] = []) =>
   NativeModule.setCallsign(callsign, aliases);
-export const startFlightSession = () => NativeModule.startFlightSession();
+export const startFlightSession = (ownerUserId: string) =>
+  NativeModule.startFlightSession(ownerUserId);
 export const stopFlightSession = () => NativeModule.stopFlightSession();
 export const getFlightSessionStatus = () =>
   NativeModule.getFlightSessionStatus();
-export const listFlightSessions = () => NativeModule.listFlightSessions();
+export const listFlightSessions = (ownerUserId: string) =>
+  NativeModule.listFlightSessions(ownerUserId);
 export const saveFlightSessionProcessingResult = (
+  ownerUserId: string,
   sessionId: string,
   transcript: string,
   translation: string,
@@ -105,6 +109,7 @@ export const saveFlightSessionProcessingResult = (
   translationModel: string
 ) =>
   NativeModule.saveFlightSessionProcessingResult(
+    ownerUserId,
     sessionId,
     transcript,
     translation,
