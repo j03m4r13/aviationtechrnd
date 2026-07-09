@@ -89,10 +89,10 @@ class AviationCallsignMonitorModule : Module() {
       current.status()
     }
 
-    AsyncFunction("startFlightSession") {
+    AsyncFunction("startFlightSession") { ownerUserId: String ->
       val currentSession = flightSession
         ?: throw IllegalStateException("Initialize the monitor first")
-      currentSession.start()
+      currentSession.start(ownerUserId)
     }
 
     AsyncFunction("stopFlightSession") {
@@ -103,13 +103,14 @@ class AviationCallsignMonitorModule : Module() {
       flightSession?.status() ?: emptyFlightSessionStatus()
     }
 
-    AsyncFunction("listFlightSessions") {
+    AsyncFunction("listFlightSessions") { ownerUserId: String ->
       val context = appContext.reactContext
         ?: throw IllegalStateException("React context is not available")
-      FlightSessionStore.listSessions(context)
+      FlightSessionStore.listSessions(context, ownerUserId)
     }
 
     AsyncFunction("saveFlightSessionProcessingResult") {
+      ownerUserId: String,
       sessionId: String,
       transcript: String,
       translation: String,
@@ -123,6 +124,7 @@ class AviationCallsignMonitorModule : Module() {
         ?: throw IllegalStateException("React context is not available")
       FlightSessionStore.saveProcessingResult(
         context = context,
+        ownerUserId = ownerUserId,
         sessionId = sessionId,
         transcript = transcript,
         translation = translation,
@@ -135,13 +137,14 @@ class AviationCallsignMonitorModule : Module() {
     }
 
     AsyncFunction("shareFlightSessionFile") {
+      ownerUserId: String,
       filePath: String,
       mimeType: String,
       title: String ->
 
       val context = appContext.reactContext
         ?: throw IllegalStateException("React context is not available")
-      FlightSessionShare.shareFile(context, filePath, mimeType, title)
+      FlightSessionShare.shareFile(context, ownerUserId, filePath, mimeType, title)
     }
 
     AsyncFunction("testAlert") { confirmed: Boolean ->
@@ -166,6 +169,7 @@ class AviationCallsignMonitorModule : Module() {
 
   private fun emptyFlightSessionStatus(): Map<String, Any?> = mapOf(
     "active" to false,
+    "ownerUserId" to null,
     "sessionId" to null,
     "recordingFile" to null,
     "recordingContainer" to null,
