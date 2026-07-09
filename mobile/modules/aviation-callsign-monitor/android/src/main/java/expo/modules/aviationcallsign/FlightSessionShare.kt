@@ -8,10 +8,17 @@ import java.io.File
 internal object FlightSessionShare {
   fun shareFile(
     context: Context,
+    ownerUserId: String,
     filePath: String,
     mimeType: String,
     title: String
   ): Map<String, Any?> {
+    require(ownerUserId.isNotBlank()) { "ownerUserId is required" }
+
+    if (!FlightSessionStore.isOwnedFile(context, ownerUserId, filePath)) {
+      throw SecurityException("This file does not belong to the signed-in user.")
+    }
+
     val file = File(filePath)
     if (!file.exists() || !file.isFile || file.length() <= 0L) {
       throw IllegalArgumentException("The export file was not found or is empty: $filePath")
