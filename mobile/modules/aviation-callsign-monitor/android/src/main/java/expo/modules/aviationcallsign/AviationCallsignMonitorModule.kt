@@ -109,30 +109,20 @@ class AviationCallsignMonitorModule : Module() {
       FlightSessionStore.listSessions(context, ownerUserId)
     }
 
-    AsyncFunction("saveFlightSessionProcessingResult") {
-      ownerUserId: String,
-      sessionId: String,
-      transcript: String,
-      translation: String,
-      sourceLanguage: String,
-      targetLanguage: String,
-      cloudSessionId: String,
-      transcriptionModel: String,
-      translationModel: String ->
-
+    AsyncFunction("saveFlightSessionProcessingResult") { payload: Map<String, Any?> ->
       val context = appContext.reactContext
         ?: throw IllegalStateException("React context is not available")
       FlightSessionStore.saveProcessingResult(
         context = context,
-        ownerUserId = ownerUserId,
-        sessionId = sessionId,
-        transcript = transcript,
-        translation = translation,
-        sourceLanguage = sourceLanguage,
-        targetLanguage = targetLanguage,
-        cloudSessionId = cloudSessionId,
-        transcriptionModel = transcriptionModel,
-        translationModel = translationModel
+        ownerUserId = payload.requireString("ownerUserId"),
+        sessionId = payload.requireString("sessionId"),
+        transcript = payload.requireString("transcript"),
+        translation = payload.requireString("translation"),
+        sourceLanguage = payload.requireString("sourceLanguage"),
+        targetLanguage = payload.requireString("targetLanguage"),
+        cloudSessionId = payload.requireString("cloudSessionId"),
+        transcriptionModel = payload.requireString("transcriptionModel"),
+        translationModel = payload.requireString("translationModel")
       )
     }
 
@@ -182,4 +172,10 @@ class AviationCallsignMonitorModule : Module() {
     "eventCount" to 0,
     "message" to null
   )
+
+  private fun Map<String, Any?>.requireString(key: String): String {
+    val value = this[key] as? String
+    require(!value.isNullOrBlank()) { "$key is required" }
+    return value
+  }
 }
