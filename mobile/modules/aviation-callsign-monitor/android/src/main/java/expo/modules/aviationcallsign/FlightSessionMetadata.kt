@@ -24,6 +24,7 @@ internal data class FlightCallsignEvent(
 }
 
 internal data class FlightSessionMetadata(
+  val ownerUserId: String,
   val sessionId: String,
   val startedAtEpochMs: Long,
   val endedAtEpochMs: Long?,
@@ -32,6 +33,7 @@ internal data class FlightSessionMetadata(
 ) {
   fun toJson(): JSONObject {
     val root = JSONObject()
+      .put("ownerUserId", ownerUserId)
       .put("sessionId", sessionId)
       .put("startedAtEpochMs", startedAtEpochMs)
       .put("endedAtEpochMs", endedAtEpochMs)
