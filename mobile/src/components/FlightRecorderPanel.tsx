@@ -136,6 +136,19 @@ function savedResult(session: FlightSessionSummary): ProcessingResult | null {
   };
 }
 
+function recordingMimeType(session: FlightSessionSummary): string {
+  const path = session.recordingFile?.toLowerCase() ?? '';
+  if (
+    session.recordingContainer === 'm4a' ||
+    session.recordingCodec === 'aac_lc' ||
+    path.endsWith('.m4a') ||
+    path.endsWith('.mp4')
+  ) {
+    return 'audio/mp4';
+  }
+  return 'audio/wav';
+}
+
 export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
   const [status, setStatus] = useState<FlightSessionStatus>(emptyStatus);
   const [sessions, setSessions] = useState<FlightSessionSummary[]>([]);
@@ -358,7 +371,8 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
           <Text style={styles.eyebrow}>LOCAL FLIGHT AUDIO</Text>
           <Text style={styles.title}>Flight Recorder</Text>
           <Text style={styles.help}>
-            Records locally during flight. Transcription, translation, and exports happen after the flight.
+            Records compressed M4A audio locally during flight. Transcription,
+            translation, and exports happen after the flight.
           </Text>
         </View>
         <View style={[styles.statusPill, status.active && styles.statusPillActive]}>
@@ -449,7 +463,7 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
               </View>
 
               <View style={styles.sessionActions}>
-                <Pressable disabled={!session.recordingFile || !session.recordingExists} onPress={() => void exportFile(session.recordingFile, 'audio/wav', `Export audio - ${title}`)} style={({ pressed }) => [styles.actionButton, styles.exportButton, (!session.recordingFile || !session.recordingExists || pressed) && styles.buttonPressed]}>
+                <Pressable disabled={!session.recordingFile || !session.recordingExists} onPress={() => void exportFile(session.recordingFile, recordingMimeType(session), `Export audio - ${title}`)} style={({ pressed }) => [styles.actionButton, styles.exportButton, (!session.recordingFile || !session.recordingExists || pressed) && styles.buttonPressed]}>
                   <Text style={styles.actionButtonText}>Export Audio</Text>
                 </Pressable>
                 <Pressable disabled={!session.metadataFile} onPress={() => void exportFile(session.metadataFile, 'application/json', `Export metadata - ${title}`)} style={({ pressed }) => [styles.actionButton, styles.exportButton, (!session.metadataFile || pressed) && styles.buttonPressed]}>
