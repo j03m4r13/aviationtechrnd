@@ -12,6 +12,7 @@ import { processAudio } from '../services/audio-processing-api';
 
 type FlightSessionStatus = {
   active: boolean;
+  ownerUserId?: string | null;
   sessionId: string | null;
   recordingFile: string | null;
   recordingDurationMs: number | null;
@@ -20,6 +21,7 @@ type FlightSessionStatus = {
 };
 
 type FlightSessionSummary = {
+  ownerUserId?: string | null;
   sessionId: string | null;
   startedAtEpochMs: number;
   endedAtEpochMs: number | null;
@@ -52,10 +54,15 @@ type ProcessingResult = {
   error?: string;
 };
 
+type FlightRecorderPanelProps = {
+  ownerUserId: string;
+};
+
 const SOURCE_LANGUAGE = 'en';
 const TARGET_LANGUAGE = 'tl';
 const emptyStatus: FlightSessionStatus = {
   active: false,
+  ownerUserId: null,
   sessionId: null,
   recordingFile: null,
   recordingDurationMs: null,
@@ -118,7 +125,7 @@ function savedResult(session: FlightSessionSummary): ProcessingResult | null {
   };
 }
 
-export function FlightRecorderPanel() {
+export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
   const [status, setStatus] = useState<FlightSessionStatus>(emptyStatus);
   const [sessions, setSessions] = useState<FlightSessionSummary[]>([]);
   const [busy, setBusy] = useState(false);
@@ -129,7 +136,7 @@ export function FlightRecorderPanel() {
   const playbackStatus = useAudioPlayerStatus(player);
 
   async function refreshSessions() {
-    const next = (await AviationCallsignMonitor.listFlightSessions()) as FlightSessionSummary[];
+    const next = (await AviationCallsignMonitor.listFlightSessions(ownerUserId)) as FlightSessionSummary[];
     setSessions(next);
     setProcessingStates((current) => {
       const updated = { ...current };
@@ -190,7 +197,7 @@ export function FlightRecorderPanel() {
         Alert.alert('Microphone required', 'Enable microphone access first.');
         return;
       }
-      setStatus((await AviationCallsignMonitor.startFlightSession()) as FlightSessionStatus);
+      setStatus((await AviationCallsignMonitor.startFlightSession(ownerUserId)) as FlightSessionStatus);
     } catch (error) {
       Alert.alert('Unable to start flight recording', error instanceof Error ? error.message : String(error));
     } finally {
@@ -263,6 +270,7 @@ export function FlightRecorderPanel() {
       });
 
       const saved = (await AviationCallsignMonitor.saveFlightSessionProcessingResult(
+        ownerUserId,
         id,
         response.transcript,
         response.translation,
@@ -313,7 +321,7 @@ export function FlightRecorderPanel() {
 
   useEffect(() => {
     void refreshAll();
-  }, []);
+  }, [ownerUserId]);
 
   useEffect(() => {
     if (playbackStatus.didJustFinish) setPlayingSessionId(null);
@@ -366,7 +374,7 @@ export function FlightRecorderPanel() {
       </View>
 
       {sessions.length === 0 ? (
-        <Text style={styles.emptyText}>No saved sessions yet. Start and stop a flight recording first.</Text>
+        <Text style={styles.emptyText}>No saved sessions for this signed-in user yet.</Text>
       ) : (
         sessions.map((session) => {
           const key = sessionKey(session);
