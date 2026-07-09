@@ -6,6 +6,7 @@ import AviationCallsignMonitor from '../../modules/aviation-callsign-monitor';
 
 type NativeExportModule = {
   shareFlightSessionFile(
+    ownerUserId: string,
     path: string,
     mimeType: string,
     title: string
@@ -13,6 +14,7 @@ type NativeExportModule = {
 };
 
 type FlightSessionSummary = {
+  ownerUserId?: string | null;
   sessionId: string | null;
   startedAtEpochMs: number;
   recordingFile: string | null;
@@ -24,6 +26,10 @@ type FlightSessionSummary = {
   translationText?: string | null;
 };
 
+type FlightSessionExportPanelProps = {
+  ownerUserId: string;
+};
+
 const NativeExport = requireNativeModule<NativeExportModule>(
   'AviationCallsignMonitor'
 );
@@ -33,6 +39,7 @@ function formatDate(value: number): string {
 }
 
 async function exportFile(
+  ownerUserId: string,
   path: string | null | undefined,
   mimeType: string,
   title: string
@@ -43,20 +50,20 @@ async function exportFile(
   }
 
   try {
-    await NativeExport.shareFlightSessionFile(path, mimeType, title);
+    await NativeExport.shareFlightSessionFile(ownerUserId, path, mimeType, title);
   } catch (error) {
     Alert.alert('Export failed', error instanceof Error ? error.message : String(error));
   }
 }
 
-export function FlightSessionExportPanel() {
+export function FlightSessionExportPanel({ ownerUserId }: FlightSessionExportPanelProps) {
   const [sessions, setSessions] = useState<FlightSessionSummary[]>([]);
   const [busy, setBusy] = useState(false);
 
   async function refresh() {
     try {
       setBusy(true);
-      const next = await AviationCallsignMonitor.listFlightSessions();
+      const next = await AviationCallsignMonitor.listFlightSessions(ownerUserId);
       setSessions(next as FlightSessionSummary[]);
     } catch (error) {
       Alert.alert(
@@ -70,7 +77,7 @@ export function FlightSessionExportPanel() {
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [ownerUserId]);
 
   return (
     <View style={styles.card}>
@@ -78,8 +85,8 @@ export function FlightSessionExportPanel() {
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Flight exports</Text>
           <Text style={styles.help}>
-            Share audio, metadata, transcript, and translation files from saved
-            flight sessions.
+            Share audio, metadata, transcript, and translation files from this
+            signed-in user&apos;s saved flight sessions.
           </Text>
         </View>
         <Pressable
@@ -95,7 +102,7 @@ export function FlightSessionExportPanel() {
       </View>
 
       {sessions.length === 0 ? (
-        <Text style={styles.emptyText}>No saved flight sessions yet.</Text>
+        <Text style={styles.emptyText}>No saved flight sessions for this signed-in user yet.</Text>
       ) : (
         sessions.map((session) => {
           const id = session.sessionId ?? session.recordingFile ?? 'flight-session';
@@ -123,7 +130,7 @@ export function FlightSessionExportPanel() {
                 <Pressable
                   disabled={!session.recordingFile || !session.recordingExists}
                   onPress={() =>
-                    void exportFile(session.recordingFile, 'audio/wav', `Export audio - ${id}`)
+                    void exportFile(ownerUserId, session.recordingFile, 'audio/wav', `Export audio - ${id}`)
                   }
                   style={({ pressed }) => [
                     styles.actionButton,
@@ -137,7 +144,7 @@ export function FlightSessionExportPanel() {
                 <Pressable
                   disabled={!session.metadataFile}
                   onPress={() =>
-                    void exportFile(session.metadataFile, 'application/json', `Export metadata - ${id}`)
+                    void exportFile(ownerUserId, session.metadataFile, 'application/json', `Export metadata - ${id}`)
                   }
                   style={({ pressed }) => [
                     styles.actionButton,
@@ -150,7 +157,7 @@ export function FlightSessionExportPanel() {
                 <Pressable
                   disabled={!session.transcriptFile}
                   onPress={() =>
-                    void exportFile(session.transcriptFile, 'application/json', `Export transcript - ${id}`)
+                    void exportFile(ownerUserId, session.transcriptFile, 'application/json', `Export transcript - ${id}`)
                   }
                   style={({ pressed }) => [
                     styles.actionButton,
@@ -163,7 +170,7 @@ export function FlightSessionExportPanel() {
                 <Pressable
                   disabled={!session.translationFile}
                   onPress={() =>
-                    void exportFile(session.translationFile, 'application/json', `Export translation - ${id}`)
+                    void exportFile(ownerUserId, session.translationFile, 'application/json', `Export translation - ${id}`)
                   }
                   style={({ pressed }) => [
                     styles.actionButton,
