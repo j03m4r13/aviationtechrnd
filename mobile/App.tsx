@@ -89,7 +89,7 @@ function AppGate() {
         {tool === 'recorder' ? (
           <AviationVoiceApp user={user} signOut={signOut} />
         ) : (
-          <CallsignMonitorApp />
+          <CallsignMonitorApp ownerUserId={user.id} />
         )}
       </View>
     </View>
