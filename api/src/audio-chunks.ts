@@ -9,6 +9,8 @@ const execFileAsync = promisify(execFile);
 
 const DEFAULT_CHUNK_MS = 10 * 60 * 1000;
 const DEFAULT_CHUNK_BITRATE = '24k';
+const DEFAULT_TRANSCRIPTION_ENHANCEMENT_FILTER =
+  'highpass=f=120,lowpass=f=4200,dynaudnorm=f=150:g=15:p=0.95';
 
 export type AudioTranscriptionChunk = {
   index: number;
@@ -26,11 +28,24 @@ export type AudioChunkPreparation = {
   chunkingRequired: boolean;
 };
 
+export type AudioTranscriptionEnhancement = {
+  audio: Buffer;
+  filename: string;
+  mimeType: string;
+  enhanced: boolean;
+};
+
 type PrepareAudioChunksInput = {
   audio: Buffer;
   filename: string;
   mimeType: string;
   durationMs: number;
+};
+
+type EnhanceAudioInput = {
+  audio: Buffer;
+  filename: string;
+  mimeType: string;
 };
 
 export async function prepareAudioChunks({
@@ -145,6 +160,83 @@ export async function prepareAudioChunks({
   } finally {
     await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+export async function enhanceAudioForTranscription({
+  audio,
+  filename,
+  mimeType
+}: EnhanceAudioInput): Promise<AudioTranscriptionEnhancement> {
+  if (process.env.AUDIO_TRANSCRIPTION_ENHANCEMENT === 'false') {
+    return { audio, filename, mimeType, enhanced: false };
+  }
+
+  const ffmpegPath = process.env.FFMPEG_PATH ?? 'ffmpeg';
+  const filter =
+    process.env.AUDIO_TRANSCRIPTION_ENHANCEMENT_FILTER ??
+    DEFAULT_TRANSCRIPTION_ENHANCEMENT_FILTER;
+  const tempRoot = await mkdtemp(join(tmpdir(), 'aviation-audio-enhance-'));
+  const inputExtension = safeAudioExtension(filename, mimeType);
+  const inputPath = join(tempRoot, `input-${randomUUID()}${inputExtension}`);
+  const outputPath = join(tempRoot, `enhanced-${randomUUID()}.wav`);
+
+  try {
+    await writeFile(inputPath, audio);
+    await execFileAsync(
+      ffmpegPath,
+      [
+        '-hide_banner',
+        '-nostdin',
+        '-y',
+        '-i',
+        inputPath,
+        '-vn',
+        '-ac',
+        '1',
+        '-ar',
+        '16000',
+        '-af',
+        filter,
+        '-c:a',
+        'pcm_s16le',
+        outputPath
+      ],
+      {
+        maxBuffer: 1024 * 1024
+      }
+    );
+
+    return {
+      audio: await readFile(outputPath),
+      filename: replaceAudioExtension(filename, '.enhanced.wav'),
+      mimeType: 'audio/wav',
+      enhanced: true
+    };
+  } catch (error) {
+    if (process.env.AUDIO_TRANSCRIPTION_ENHANCEMENT_REQUIRED === 'true') {
+      const details = error instanceof Error ? error.message : String(error);
+      throw Object.assign(
+        new Error(
+          `Unable to enhance the recording before transcription. Make sure ffmpeg is installed or set FFMPEG_PATH. Details: ${details}`
+        ),
+        {
+          code: 'audio_enhancement_failed',
+          statusCode: 500
+        }
+      );
+    }
+
+    return { audio, filename, mimeType, enhanced: false };
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function replaceAudioExtension(filename: string, extension: string): string {
+  const safeName = filename || 'recording.m4a';
+  const existingExtension = extname(safeName);
+  if (!existingExtension) return `${safeName}${extension}`;
+  return `${safeName.slice(0, -existingExtension.length)}${extension}`;
 }
 
 function safeAudioExtension(filename: string, mimeType: string): string {
