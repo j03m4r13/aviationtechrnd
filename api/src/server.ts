@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyReply } from 'fastify';
 
+import { prepareAudioChunks } from './audio-chunks.js';
 import { determineAudioDurationMs } from './audio-duration.js';
 import { authenticateRequest } from './auth.js';
 import {
@@ -16,9 +17,9 @@ import {
   startProcessingJob,
   upsertCloudSession
 } from './cloud-repository.js';
-import { transcribeAndTranslate } from './openai-service.js';
+import { transcribeAndTranslate, transcribeChunksAndTranslate } from './openai-service.js';
 
-const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES ?? 64 * 1024 * 1024);
 const MAX_DURATION_MS = 4 * 60 * 60 * 1000;
 const ALLOWED_AUDIO_TYPES = new Set([
   'audio/mp4',
@@ -286,14 +287,41 @@ app.post('/v1/audio/process', async (request, reply) => {
       }
     }
 
-    const result = await transcribeAndTranslate({
+    const chunks = await prepareAudioChunks({
       audio,
       filename,
       mimeType,
-      durationMs: authoritativeDurationMs,
-      sourceLanguage,
-      targetLanguage
+      durationMs: authoritativeDurationMs
     });
+
+    if (chunks.length > 1) {
+      request.log.info(
+        {
+          chunkCount: chunks.length,
+          authoritativeDurationMs,
+          filename,
+          mimeType,
+          audioBytes: audio.length
+        },
+        'Processing long recording as transcription chunks'
+      );
+    }
+
+    const result = chunks.length === 1
+      ? await transcribeAndTranslate({
+          audio: chunks[0].audio,
+          filename: chunks[0].filename,
+          mimeType: chunks[0].mimeType,
+          durationMs: authoritativeDurationMs,
+          sourceLanguage,
+          targetLanguage
+        })
+      : await transcribeChunksAndTranslate({
+          chunks,
+          durationMs: authoritativeDurationMs,
+          sourceLanguage,
+          targetLanguage
+        });
 
     await completeCloudProcessing({
       userId: user.id,
@@ -317,7 +345,10 @@ app.post('/v1/audio/process', async (request, reply) => {
       models: result.models,
       cloudSessionId: cloudSession.id,
       idempotentReplay: false,
-      usage: await getCurrentMonthUsage(user.id)
+      usage: await getCurrentMonthUsage(user.id),
+      processing: {
+        chunkCount: result.usage.chunkCount ?? chunks.length
+      }
     });
   } catch (error) {
     request.log.error({ err: error }, 'Audio processing failed');
@@ -347,6 +378,9 @@ function normalizeAudioMimeType(mimeType: string): string {
     normalized === 'audio/vnd.wave'
   ) {
     return 'audio/wav';
+  }
+  if (normalized === 'audio/m4a' || normalized === 'audio/x-m4a') {
+    return 'audio/mp4';
   }
   return normalized;
 }
