@@ -165,6 +165,8 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
   const [playingSessionId, setPlayingSessionId] = useState<string | null>(null);
   const [processingStates, setProcessingStates] = useState<Record<string, ProcessingState>>({});
   const [processingResults, setProcessingResults] = useState<Record<string, ProcessingResult>>({});
+  const [expandedTranscripts, setExpandedTranscripts] = useState<Record<string, boolean>>({});
+  const [expandedTranslations, setExpandedTranslations] = useState<Record<string, boolean>>({});
   const [recordingStartedAtMs, setRecordingStartedAtMs] = useState<number | null>(null);
   const [elapsedTickMs, setElapsedTickMs] = useState(Date.now());
   const player = useAudioPlayer(null);
@@ -181,6 +183,14 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
     } else {
       setRecordingStartedAtMs(null);
     }
+  }
+
+  function toggleTranscript(key: string) {
+    setExpandedTranscripts((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  function toggleTranslation(key: string) {
+    setExpandedTranslations((current) => ({ ...current, [key]: !current[key] }));
   }
 
   async function refreshSessions() {
@@ -316,6 +326,7 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
       delete updated[key];
       return updated;
     });
+    setExpandedTranscripts((current) => ({ ...current, [key]: true }));
 
     try {
       const response = await processAudio({
@@ -468,6 +479,8 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
           const result = processingResults[key] ?? savedResult(session);
           const isProcessing = state === 'uploading';
           const isPlaying = playingSessionId === (session.sessionId ?? session.recordingFile);
+          const transcriptExpanded = expandedTranscripts[key] ?? false;
+          const translationExpanded = expandedTranslations[key] ?? false;
           const transcriptLabel = state === 'uploading' ? 'Uploading and processing' : state === 'completed' ? 'Completed and saved locally' : state === 'failed' ? 'Failed - retry available' : 'Not processed';
           const translationLabel = result?.translation ? 'Completed and saved locally' : 'Waiting for transcript';
           const title = session.sessionId ?? 'Flight session';
@@ -527,16 +540,28 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
 
               {result?.transcript ? (
                 <View style={styles.resultBox}>
-                  <Text style={styles.resultTitle}>Transcript</Text>
-                  <Text selectable numberOfLines={6} style={styles.resultText}>{result.transcript}</Text>
+                  <View style={styles.resultHeaderRow}>
+                    <Text style={styles.resultTitle}>Transcript</Text>
+                    <Pressable onPress={() => toggleTranscript(key)} style={styles.expandButton}>
+                      <Text style={styles.expandButtonText}>{transcriptExpanded ? 'Collapse transcript' : 'Show full transcript'}</Text>
+                    </Pressable>
+                  </View>
+                  <Text selectable numberOfLines={transcriptExpanded ? undefined : 6} style={[styles.resultText, transcriptExpanded && styles.fullResultText]}>{result.transcript}</Text>
+                  {!transcriptExpanded ? <Text style={styles.previewHint}>Preview only. Tap Show full transcript to read everything.</Text> : null}
                   <Text style={styles.modelText}>{result.transcriptionModel} → {result.translationModel}</Text>
                 </View>
               ) : null}
 
               {result?.translation ? (
                 <View style={styles.resultBox}>
-                  <Text style={styles.resultTitle}>Translation</Text>
-                  <Text selectable numberOfLines={6} style={styles.resultText}>{result.translation}</Text>
+                  <View style={styles.resultHeaderRow}>
+                    <Text style={styles.resultTitle}>Translation</Text>
+                    <Pressable onPress={() => toggleTranslation(key)} style={styles.expandButton}>
+                      <Text style={styles.expandButtonText}>{translationExpanded ? 'Collapse translation' : 'Show full translation'}</Text>
+                    </Pressable>
+                  </View>
+                  <Text selectable numberOfLines={translationExpanded ? undefined : 6} style={[styles.resultText, translationExpanded && styles.fullResultText]}>{result.translation}</Text>
+                  {!translationExpanded ? <Text style={styles.previewHint}>Preview only. Tap Show full translation to read everything.</Text> : null}
                 </View>
               ) : null}
 
@@ -611,9 +636,14 @@ const styles = StyleSheet.create({
   translateButton: { backgroundColor: '#6d28d9' },
   exportButton: { backgroundColor: '#475569' },
   actionButtonText: { color: '#eff6ff', fontSize: 12, fontWeight: '800' },
-  resultBox: { backgroundColor: '#101826', borderColor: '#334155', borderRadius: 10, borderWidth: 1, gap: 5, marginTop: 4, padding: 10 },
+  resultBox: { backgroundColor: '#101826', borderColor: '#334155', borderRadius: 10, borderWidth: 1, gap: 6, marginTop: 4, padding: 10 },
+  resultHeaderRow: { alignItems: 'center', flexDirection: 'row', gap: 8, justifyContent: 'space-between' },
   resultTitle: { color: '#e2e8f0', fontSize: 12, fontWeight: '900' },
   resultText: { color: '#cbd5e1', fontSize: 12, lineHeight: 18 },
+  fullResultText: { lineHeight: 19 },
+  expandButton: { borderColor: '#3b82f6', borderRadius: 8, borderWidth: 1, paddingHorizontal: 9, paddingVertical: 6 },
+  expandButtonText: { color: '#93c5fd', fontSize: 11, fontWeight: '900' },
+  previewHint: { color: '#64748b', fontSize: 11, lineHeight: 15 },
   modelText: { color: '#64748b', fontSize: 11, lineHeight: 15 },
   pathText: { color: '#64748b', fontSize: 11, lineHeight: 15 }
 });
