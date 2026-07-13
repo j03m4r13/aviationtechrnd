@@ -42,6 +42,7 @@ export type ProcessingMetrics = {
   inputTokens: number | null;
   outputTokens: number | null;
   estimatedCostUsd: number | null;
+  chunkCount?: number;
 };
 
 function requireData<T>(data: T | null, error: { message: string } | null): T {
@@ -271,23 +272,34 @@ export async function failCloudProcessing(input: {
   message: string;
 }): Promise<void> {
   const now = new Date().toISOString();
-  await Promise.all([
-    supabaseAdmin
-      .from('recording_sessions')
-      .update({ status: 'failed', error_message: input.message, updated_at: now })
-      .eq('id', input.cloudSessionId)
-      .eq('user_id', input.userId),
-    supabaseAdmin
-      .from('processing_jobs')
-      .update({
-        status: 'failed',
-        completed_at: now,
-        error_code: input.code,
-        error_message: input.message
-      })
-      .eq('id', input.jobId)
-      .eq('user_id', input.userId)
-  ]);
+  const { error: sessionError } = await supabaseAdmin
+    .from('recording_sessions')
+    .update({
+      updated_at: now,
+      status: 'failed',
+      error_message: input.message
+    })
+    .eq('id', input.cloudSessionId)
+    .eq('user_id', input.userId);
+
+  if (sessionError) {
+    throw new Error(sessionError.message);
+  }
+
+  const { error: jobError } = await supabaseAdmin
+    .from('processing_jobs')
+    .update({
+      status: 'failed',
+      completed_at: now,
+      error_code: input.code,
+      error_message: input.message
+    })
+    .eq('id', input.jobId)
+    .eq('user_id', input.userId);
+
+  if (jobError) {
+    throw new Error(jobError.message);
+  }
 }
 
 export async function listCloudSessions(userId: string): Promise<CloudSessionRow[]> {
@@ -297,60 +309,72 @@ export async function listCloudSessions(userId: string): Promise<CloudSessionRow
     .eq('user_id', userId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
-    .limit(200);
+    .limit(100);
 
   if (error) {
     throw new Error(error.message);
   }
+
   return (data ?? []) as CloudSessionRow[];
 }
 
 export async function softDeleteCloudSession(
   userId: string,
-  cloudSessionId: string
+  sessionId: string
 ): Promise<boolean> {
-  const { data, error } = await supabaseAdmin
+  const { error, count } = await supabaseAdmin
     .from('recording_sessions')
-    .update({
-      deleted_at: new Date().toISOString(),
-      original_transcript: null,
-      translated_transcript: null,
-      error_message: null,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', cloudSessionId)
+    .update({ deleted_at: new Date().toISOString() })
     .eq('user_id', userId)
+    .eq('id', sessionId)
     .is('deleted_at', null)
-    .select('id');
+    .select('id', { count: 'exact', head: true });
 
   if (error) {
     throw new Error(error.message);
   }
-  return (data?.length ?? 0) > 0;
+
+  return (count ?? 0) > 0;
 }
 
 export async function getCurrentMonthUsage(userId: string): Promise<UsageSummary> {
-  const now = new Date();
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const start = new Date();
+  start.setUTCDate(1);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setUTCMonth(end.getUTCMonth() + 1);
 
   const { data, error } = await supabaseAdmin
     .from('usage_events')
     .select('billable_audio_seconds')
     .eq('user_id', userId)
-    .gte('created_at', monthStart.toISOString())
-    .lt('created_at', nextMonth.toISOString());
+    .gte('created_at', start.toISOString())
+    .lt('created_at', end.toISOString());
 
   if (error) {
     throw new Error(error.message);
   }
 
+  const processedSeconds = (data ?? []).reduce(
+    (sum, row: { billable_audio_seconds: number | null }) => sum + (row.billable_audio_seconds ?? 0),
+    0
+  );
+
+  const { count, error: jobsError } = await supabaseAdmin
+    .from('processing_jobs')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('status', 'completed')
+    .gte('completed_at', start.toISOString())
+    .lt('completed_at', end.toISOString());
+
+  if (jobsError) {
+    throw new Error(jobsError.message);
+  }
+
   return {
-    month: monthStart.toISOString().slice(0, 7),
-    processedSeconds: (data ?? []).reduce(
-      (sum, row) => sum + Number(row.billable_audio_seconds ?? 0),
-      0
-    ),
-    completedJobs: data?.length ?? 0
+    month: start.toISOString().slice(0, 7),
+    processedSeconds,
+    completedJobs: count ?? 0
   };
 }
