@@ -294,6 +294,10 @@ app.post('/v1/audio/process', async (request, reply) => {
       durationMs: authoritativeDurationMs
     });
 
+    if (chunks.length === 0) {
+      throw new Error('Audio chunk preparation returned no chunks.');
+    }
+
     if (chunks.length > 1) {
       request.log.info(
         {
@@ -307,11 +311,12 @@ app.post('/v1/audio/process', async (request, reply) => {
       );
     }
 
+    const firstChunk = chunks[0];
     const result = chunks.length === 1
       ? await transcribeAndTranslate({
-          audio: chunks[0].audio,
-          filename: chunks[0].filename,
-          mimeType: chunks[0].mimeType,
+          audio: firstChunk.audio,
+          filename: firstChunk.filename,
+          mimeType: firstChunk.mimeType,
           durationMs: authoritativeDurationMs,
           sourceLanguage,
           targetLanguage
