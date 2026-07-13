@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import androidx.core.content.ContextCompat
 import java.io.Closeable
 import java.io.File
@@ -16,7 +17,7 @@ internal class FlightAudioEngine(
   private val context: Context,
   private val sampleRate: Int = 16_000,
   private val channelCount: Int = 1,
-  private val audioSource: Int = MediaRecorder.AudioSource.VOICE_RECOGNITION
+  private val audioSource: Int = defaultAudioSource()
 ) : Closeable {
   private val running = AtomicBoolean(false)
   private val consumers = CopyOnWriteArrayList<AudioFrameConsumer>()
@@ -64,21 +65,7 @@ internal class FlightAudioEngine(
     }
 
     val frameSamples = sampleRate / 50 * channelCount // 20 ms frames
-    val newRecorder = AudioRecord.Builder()
-      .setAudioSource(audioSource)
-      .setAudioFormat(
-        AudioFormat.Builder()
-          .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-          .setSampleRate(sampleRate)
-          .setChannelMask(channelMask)
-          .build()
-      )
-      .setBufferSizeInBytes(maxOf(minimumBytes, frameSamples * 2 * 8))
-      .build()
-
-    check(newRecorder.state == AudioRecord.STATE_INITIALIZED) {
-      "Unable to initialize flight audio input"
-    }
+    val newRecorder = createFlightAudioRecord(channelMask, minimumBytes, frameSamples)
 
     val recordingInfo = if (recordingWriter != null && recordingDirectory != null) {
       recordingWriter.start(sessionId, recordingDirectory, recordingFormat)
@@ -134,6 +121,38 @@ internal class FlightAudioEngine(
     return info
   }
 
+  private fun createFlightAudioRecord(
+    channelMask: Int,
+    minimumBytes: Int,
+    frameSamples: Int
+  ): AudioRecord {
+    var lastError: Throwable? = null
+
+    for (source in audioSourceCandidates(audioSource)) {
+      val candidate = runCatching {
+        AudioRecord.Builder()
+          .setAudioSource(source)
+          .setAudioFormat(
+            AudioFormat.Builder()
+              .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+              .setSampleRate(sampleRate)
+              .setChannelMask(channelMask)
+              .build()
+          )
+          .setBufferSizeInBytes(maxOf(minimumBytes, frameSamples * 2 * 8))
+          .build()
+      }.onFailure { lastError = it }.getOrNull()
+
+      if (candidate?.state == AudioRecord.STATE_INITIALIZED) {
+        return candidate
+      }
+
+      runCatching { candidate?.release() }
+    }
+
+    throw IllegalStateException("Unable to initialize flight audio input", lastError)
+  }
+
   private fun captureLoop(
     activeRecorder: AudioRecord,
     frameSamples: Int
@@ -186,5 +205,29 @@ internal class FlightAudioEngine(
   override fun close() {
     stop()
     consumers.clear()
+  }
+
+  companion object {
+    private fun defaultAudioSource(): Int =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        MediaRecorder.AudioSource.UNPROCESSED
+      } else {
+        MediaRecorder.AudioSource.VOICE_RECOGNITION
+      }
+
+    private fun audioSourceCandidates(preferred: Int): List<Int> {
+      val candidates = mutableListOf<Int>()
+      fun addCandidate(source: Int) {
+        if (!candidates.contains(source)) candidates += source
+      }
+
+      addCandidate(preferred)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        addCandidate(MediaRecorder.AudioSource.UNPROCESSED)
+      }
+      addCandidate(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+      addCandidate(MediaRecorder.AudioSource.MIC)
+      return candidates
+    }
   }
 }
