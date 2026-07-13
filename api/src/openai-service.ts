@@ -293,23 +293,25 @@ function normalizeSpeakerSegments(
   chunkStartMs: number,
   chunkIndex: number
 ): SpeakerTranscriptSegment[] {
-  return segments
-    .map((segment, index) => {
-      const text = (segment.text ?? '').trim();
-      if (!text) return null;
+  const normalized: SpeakerTranscriptSegment[] = [];
 
-      const startMs = secondsToMs(segment.start, chunkStartMs);
-      const endMs = Math.max(startMs, secondsToMs(segment.end, chunkStartMs));
+  segments.forEach((segment, index) => {
+    const text = (segment.text ?? '').trim();
+    if (!text) return;
 
-      return {
-        speaker: normalizeSpeakerName(segment.speaker, index),
-        startMs,
-        endMs,
-        text,
-        chunkIndex
-      } satisfies SpeakerTranscriptSegment;
-    })
-    .filter((segment): segment is SpeakerTranscriptSegment => segment !== null);
+    const startMs = secondsToMs(segment.start, chunkStartMs);
+    const endMs = Math.max(startMs, secondsToMs(segment.end, chunkStartMs));
+
+    normalized.push({
+      speaker: normalizeSpeakerName(segment.speaker, index),
+      startMs,
+      endMs,
+      text,
+      chunkIndex
+    });
+  });
+
+  return normalized;
 }
 
 function secondsToMs(value: unknown, offsetMs: number): number {
