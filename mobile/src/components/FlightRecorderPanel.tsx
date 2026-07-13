@@ -273,6 +273,14 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
 
     const key = sessionKey(session);
     const id = session.sessionId ?? key;
+    const existingResult = processingResults[key] ?? savedResult(session);
+    const wasAlreadyProcessed =
+      processingStates[key] === 'completed' ||
+      Boolean(existingResult?.transcript || existingResult?.translation);
+    const idempotencyKey = wasAlreadyProcessed
+      ? `flight-retranscribe-${key}-${Date.now()}`
+      : `flight-transcribe-${key}`;
+
     setProcessingStates((current) => ({ ...current, [key]: 'uploading' }));
     setProcessingResults((current) => {
       const updated = { ...current };
@@ -290,7 +298,7 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
         targetLanguage: TARGET_LANGUAGE,
         inputName: 'Flight Recorder',
         inputType: 'shared-audio-frame',
-        idempotencyKey: `flight-transcribe-${key}`
+        idempotencyKey
       });
 
       const saved = (await AviationCallsignMonitor.saveFlightSessionProcessingResult(
