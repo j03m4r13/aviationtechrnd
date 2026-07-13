@@ -1,6 +1,6 @@
 import OpenAI, { toFile } from 'openai';
 
-import type { AudioTranscriptionChunk } from './audio-chunks.js';
+import { enhanceAudioForTranscription, type AudioTranscriptionChunk } from './audio-chunks.js';
 import { languageName } from './languages.js';
 
 const client = new OpenAI({
@@ -68,8 +68,14 @@ type DiarizedTranscriptionResponse = {
   }>;
 };
 
-const aviationTranscriptionPrompt =
-  'This is close-microphone pilot speech. Preserve call signs, aircraft identifiers, airport codes, runway numbers, headings, altitudes, frequencies, units, the NATO phonetic alphabet, and aviation terminology exactly. Do not invent missing words.';
+const aviationTranscriptionPrompt = [
+  'This is aircraft cockpit and radio audio.',
+  'It may contain pilot, co-pilot, passenger, tower, ground, approach, center, ATC, and other aircraft transmissions.',
+  'Transcribe every audible speaker and do not focus only on the closest or loudest pilot voice.',
+  'Quiet radio transmissions and background intercom voices should be transcribed when audible.',
+  'Preserve speaker changes, call signs, aircraft identifiers, airport codes, runway numbers, headings, altitudes, frequencies, units, the NATO phonetic alphabet, and aviation terminology exactly.',
+  'Do not invent missing words or silently guess unclear numbers.'
+].join(' ');
 
 export async function transcribeAndTranslate({
   audio,
@@ -185,7 +191,12 @@ async function transcribeAudioWithDiarization(input: {
   chunkIndex: number;
   chunkStartMs: number;
 }): Promise<TranscriptionOutput> {
-  const file = await toFile(input.audio, input.filename, { type: input.mimeType });
+  const enhanced = await enhanceAudioForTranscription({
+    audio: input.audio,
+    filename: input.filename,
+    mimeType: input.mimeType
+  });
+  const file = await toFile(enhanced.audio, enhanced.filename, { type: enhanced.mimeType });
   const createDiarizedTranscription = (
     client.audio.transcriptions.create as unknown as (
       request: Record<string, unknown>
@@ -197,6 +208,7 @@ async function transcribeAudioWithDiarization(input: {
     model: diarizationTranscriptionModel,
     response_format: 'diarized_json',
     chunking_strategy: 'auto',
+    prompt: aviationTranscriptionPrompt,
     ...(input.sourceLanguage !== 'auto' ? { language: input.sourceLanguage } : {})
   });
 
