@@ -7,8 +7,15 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-const transcriptionModel =
+const transcriptionMode =
+  process.env.OPENAI_TRANSCRIPTION_MODE ?? 'standard';
+const standardTranscriptionModel =
   process.env.OPENAI_TRANSCRIPTION_MODEL ?? 'gpt-4o-mini-transcribe';
+const diarizationTranscriptionModel =
+  process.env.OPENAI_DIARIZATION_TRANSCRIPTION_MODEL ?? 'gpt-4o-transcribe-diarize';
+const activeTranscriptionModel = isDiarizationEnabled()
+  ? diarizationTranscriptionModel
+  : standardTranscriptionModel;
 const translationModel =
   process.env.OPENAI_TRANSLATION_MODEL ?? 'gpt-5.4-mini';
 
@@ -38,6 +45,29 @@ type ProcessChunkedAudioArguments = {
   targetLanguage: string;
 };
 
+export type SpeakerTranscriptSegment = {
+  speaker: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  chunkIndex?: number;
+};
+
+type TranscriptionOutput = {
+  text: string;
+  speakerSegments: SpeakerTranscriptSegment[];
+};
+
+type DiarizedTranscriptionResponse = {
+  text?: string;
+  segments?: Array<{
+    speaker?: string;
+    start?: number;
+    end?: number;
+    text?: string;
+  }>;
+};
+
 const aviationTranscriptionPrompt =
   'This is close-microphone pilot speech. Preserve call signs, aircraft identifiers, airport codes, runway numbers, headings, altitudes, frequencies, units, the NATO phonetic alphabet, and aviation terminology exactly. Do not invent missing words.';
 
@@ -49,15 +79,18 @@ export async function transcribeAndTranslate({
   sourceLanguage,
   targetLanguage
 }: ProcessAudioArguments) {
-  const transcript = await transcribeAudio({
+  const transcription = await transcribeAudio({
     audio,
     filename,
     mimeType,
-    sourceLanguage
+    sourceLanguage,
+    chunkIndex: 0,
+    chunkStartMs: 0
   });
 
   return translateFinalTranscript({
-    transcript,
+    transcript: transcription.text,
+    speakerSegments: transcription.speakerSegments,
     durationMs,
     sourceLanguage,
     targetLanguage,
@@ -76,17 +109,22 @@ export async function transcribeChunksAndTranslate({
   }
 
   const chunkTranscripts: string[] = [];
+  const speakerSegments: SpeakerTranscriptSegment[] = [];
+
   for (const chunk of chunks) {
-    const text = await transcribeAudio({
+    const output = await transcribeAudio({
       audio: chunk.audio,
       filename: chunk.filename,
       mimeType: chunk.mimeType,
-      sourceLanguage
+      sourceLanguage,
+      chunkIndex: chunk.index,
+      chunkStartMs: chunk.startMs
     });
 
-    if (text) {
-      chunkTranscripts.push(text);
+    if (output.text) {
+      chunkTranscripts.push(output.text);
     }
+    speakerSegments.push(...output.speakerSegments);
   }
 
   const transcript = stitchChunkTranscripts(chunkTranscripts);
@@ -96,6 +134,7 @@ export async function transcribeChunksAndTranslate({
 
   return translateFinalTranscript({
     transcript,
+    speakerSegments,
     durationMs,
     sourceLanguage,
     targetLanguage,
@@ -108,22 +147,75 @@ async function transcribeAudio(input: {
   filename: string;
   mimeType: string;
   sourceLanguage: string;
-}): Promise<string> {
+  chunkIndex: number;
+  chunkStartMs: number;
+}): Promise<TranscriptionOutput> {
+  return isDiarizationEnabled()
+    ? transcribeAudioWithDiarization(input)
+    : transcribeAudioNormally(input);
+}
+
+async function transcribeAudioNormally(input: {
+  audio: Buffer;
+  filename: string;
+  mimeType: string;
+  sourceLanguage: string;
+}): Promise<TranscriptionOutput> {
   const file = await toFile(input.audio, input.filename, { type: input.mimeType });
 
   const transcription = await client.audio.transcriptions.create({
     file,
-    model: transcriptionModel,
+    model: standardTranscriptionModel,
     response_format: 'json',
     prompt: aviationTranscriptionPrompt,
     ...(input.sourceLanguage !== 'auto' ? { language: input.sourceLanguage } : {})
   });
 
-  return transcription.text.trim();
+  return {
+    text: transcription.text.trim(),
+    speakerSegments: []
+  };
+}
+
+async function transcribeAudioWithDiarization(input: {
+  audio: Buffer;
+  filename: string;
+  mimeType: string;
+  sourceLanguage: string;
+  chunkIndex: number;
+  chunkStartMs: number;
+}): Promise<TranscriptionOutput> {
+  const file = await toFile(input.audio, input.filename, { type: input.mimeType });
+  const createDiarizedTranscription = client.audio.transcriptions.create as unknown as (
+    request: Record<string, unknown>
+  ) => Promise<unknown>;
+
+  const response = await createDiarizedTranscription({
+    file,
+    model: diarizationTranscriptionModel,
+    response_format: 'diarized_json',
+    chunking_strategy: 'auto',
+    ...(input.sourceLanguage !== 'auto' ? { language: input.sourceLanguage } : {})
+  });
+
+  const diarized = response as DiarizedTranscriptionResponse;
+  const speakerSegments = normalizeSpeakerSegments(
+    diarized.segments ?? [],
+    input.chunkStartMs,
+    input.chunkIndex
+  );
+  const labelledTranscript = formatSpeakerTranscript(speakerSegments);
+  const fallbackText = (diarized.text ?? '').trim();
+
+  return {
+    text: labelledTranscript || fallbackText,
+    speakerSegments
+  };
 }
 
 async function translateFinalTranscript(input: {
   transcript: string;
+  speakerSegments: SpeakerTranscriptSegment[];
   durationMs: number;
   sourceLanguage: string;
   targetLanguage: string;
@@ -141,6 +233,7 @@ async function translateFinalTranscript(input: {
       'You are a precise professional translator for an aviation voice-notes application.',
       'Translate faithfully without adding commentary.',
       'Preserve call signs, airport identifiers, registrations, runway numbers, headings, altitudes, frequencies, units, and proper nouns.',
+      'Preserve speaker labels and timestamps when they are present in the transcript.',
       'Do not silently guess a number or identifier that is unclear in the source.',
       'Return only the translated text.'
     ].join(' '),
@@ -165,8 +258,9 @@ async function translateFinalTranscript(input: {
     translation: translation.output_text.trim(),
     sourceLanguage: input.sourceLanguage,
     targetLanguage: input.targetLanguage,
+    speakerSegments: input.speakerSegments,
     models: {
-      transcription: transcriptionModel,
+      transcription: activeTranscriptionModel,
       translation: translationModel
     },
     usage: {
@@ -184,4 +278,76 @@ function stitchChunkTranscripts(chunks: string[]): string {
     .filter(Boolean)
     .join('\n\n')
     .trim();
+}
+
+function isDiarizationEnabled(): boolean {
+  return (
+    transcriptionMode === 'speaker_diarization' ||
+    transcriptionMode === 'diarized' ||
+    standardTranscriptionModel === 'gpt-4o-transcribe-diarize'
+  );
+}
+
+function normalizeSpeakerSegments(
+  segments: NonNullable<DiarizedTranscriptionResponse['segments']>,
+  chunkStartMs: number,
+  chunkIndex: number
+): SpeakerTranscriptSegment[] {
+  return segments
+    .map((segment, index) => {
+      const text = (segment.text ?? '').trim();
+      if (!text) return null;
+
+      const startMs = secondsToMs(segment.start, chunkStartMs);
+      const endMs = Math.max(startMs, secondsToMs(segment.end, chunkStartMs));
+
+      return {
+        speaker: normalizeSpeakerName(segment.speaker, index),
+        startMs,
+        endMs,
+        text,
+        chunkIndex
+      } satisfies SpeakerTranscriptSegment;
+    })
+    .filter((segment): segment is SpeakerTranscriptSegment => segment !== null);
+}
+
+function secondsToMs(value: unknown, offsetMs: number): number {
+  const seconds = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return offsetMs;
+  }
+  return offsetMs + Math.round(seconds * 1000);
+}
+
+function normalizeSpeakerName(value: unknown, index: number): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return `Speaker ${index + 1}`;
+  }
+  if (/^speaker/i.test(raw)) {
+    return raw;
+  }
+  return `Speaker ${raw}`;
+}
+
+function formatSpeakerTranscript(segments: SpeakerTranscriptSegment[]): string {
+  return segments
+    .map((segment) => `${formatTimestamp(segment.startMs)} ${segment.speaker}: ${segment.text}`)
+    .join('\n')
+    .trim();
+}
+
+function formatTimestamp(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(seconds).padStart(2, '0');
+
+  if (hours > 0) {
+    return `[${hours}:${mm}:${ss}]`;
+  }
+  return `[${mm}:${ss}]`;
 }
