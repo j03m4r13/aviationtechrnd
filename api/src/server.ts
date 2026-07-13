@@ -17,7 +17,11 @@ import {
   startProcessingJob,
   upsertCloudSession
 } from './cloud-repository.js';
-import { transcribeAndTranslate, transcribeChunksAndTranslate } from './openai-service.js';
+import {
+  isSpeakerDiarizationMode,
+  transcribeAndTranslate,
+  transcribeChunksAndTranslate
+} from './openai-service.js';
 
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES ?? 64 * 1024 * 1024);
 const MAX_DURATION_MS = 4 * 60 * 60 * 1000;
@@ -311,12 +315,29 @@ app.post('/v1/audio/process', async (request, reply) => {
       }
     }
 
-    const chunkPreparation = await prepareAudioChunks({
-      audio,
-      filename,
-      mimeType,
-      durationMs: authoritativeDurationMs
-    });
+    const diarizationAutoChunking = isSpeakerDiarizationMode();
+    const chunkPreparation = diarizationAutoChunking
+      ? {
+          chunkMs: authoritativeDurationMs,
+          chunkingRequired: false,
+          chunks: [
+            {
+              index: 0,
+              audio,
+              filename,
+              mimeType,
+              durationMs: authoritativeDurationMs,
+              startMs: 0,
+              endMs: authoritativeDurationMs
+            }
+          ]
+        }
+      : await prepareAudioChunks({
+          audio,
+          filename,
+          mimeType,
+          durationMs: authoritativeDurationMs
+        });
     const { chunks, chunkMs, chunkingRequired } = chunkPreparation;
 
     const firstChunk = chunks[0];
@@ -332,7 +353,8 @@ app.post('/v1/audio/process', async (request, reply) => {
         authoritativeDurationMs,
         filename,
         mimeType,
-        audioBytes: audio.length
+        audioBytes: audio.length,
+        diarizationAutoChunking
       },
       'Audio transcription chunk decision'
     );
