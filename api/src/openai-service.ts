@@ -77,6 +77,10 @@ const aviationTranscriptionPrompt = [
   'Do not invent missing words or silently guess unclear numbers.'
 ].join(' ');
 
+export function isSpeakerDiarizationMode(): boolean {
+  return isDiarizationEnabled();
+}
+
 export async function transcribeAndTranslate({
   audio,
   filename,
