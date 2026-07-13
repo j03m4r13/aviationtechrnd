@@ -1,0 +1,3 @@
+android/vendor/whisper.cpp/
+android/src/main/assets/models/vosk-model-small-en-us-0.15/
+android/src/main/assets/models/*.bin

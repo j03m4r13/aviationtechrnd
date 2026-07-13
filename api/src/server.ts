@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyReply } from 'fastify';
 
+import { prepareAudioChunks } from './audio-chunks.js';
 import { determineAudioDurationMs } from './audio-duration.js';
 import { authenticateRequest } from './auth.js';
 import {
@@ -16,9 +17,13 @@ import {
   startProcessingJob,
   upsertCloudSession
 } from './cloud-repository.js';
-import { transcribeAndTranslate } from './openai-service.js';
+import {
+  isSpeakerDiarizationMode,
+  transcribeAndTranslate,
+  transcribeChunksAndTranslate
+} from './openai-service.js';
 
-const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES ?? 64 * 1024 * 1024);
 const MAX_DURATION_MS = 4 * 60 * 60 * 1000;
 const ALLOWED_AUDIO_TYPES = new Set([
   'audio/mp4',
@@ -27,6 +32,9 @@ const ALLOWED_AUDIO_TYPES = new Set([
   'audio/aac',
   'audio/mpeg',
   'audio/wav',
+  'audio/x-wav',
+  'audio/wave',
+  'audio/vnd.wave',
   'audio/webm',
   'application/octet-stream'
 ]);
@@ -141,7 +149,7 @@ app.post('/v1/audio/process', async (request, reply) => {
         }
 
         filename = part.filename || filename;
-        mimeType = part.mimetype || mimeType;
+        mimeType = normalizeAudioMimeType(part.mimetype || mimeType);
         if (!ALLOWED_AUDIO_TYPES.has(mimeType)) {
           part.file.resume();
           return reply.code(415).send({
@@ -230,6 +238,18 @@ app.post('/v1/audio/process', async (request, reply) => {
 
     const cached = await getCompletedIdempotentResult(user.id, idempotencyKey);
     if (cached) {
+      request.log.info(
+        {
+          idempotencyKey,
+          localSessionId,
+          cloudSessionId: cached.id,
+          authoritativeDurationMs,
+          filename,
+          mimeType,
+          audioBytes: audio.length
+        },
+        'Returning cached idempotent audio result'
+      );
       return reply.send({
         transcript: cached.original_transcript ?? '',
         translation: cached.translated_transcript ?? '',
@@ -267,6 +287,18 @@ app.post('/v1/audio/process', async (request, reply) => {
     if (job.status === 'completed') {
       const replay = await getCompletedIdempotentResult(user.id, idempotencyKey);
       if (replay) {
+        request.log.info(
+          {
+            idempotencyKey,
+            localSessionId,
+            cloudSessionId: replay.id,
+            authoritativeDurationMs,
+            filename,
+            mimeType,
+            audioBytes: audio.length
+          },
+          'Returning completed processing job replay'
+        );
         return reply.send({
           transcript: replay.original_transcript ?? '',
           translation: replay.translated_transcript ?? '',
@@ -283,14 +315,78 @@ app.post('/v1/audio/process', async (request, reply) => {
       }
     }
 
-    const result = await transcribeAndTranslate({
-      audio,
-      filename,
-      mimeType,
-      durationMs: authoritativeDurationMs,
-      sourceLanguage,
-      targetLanguage
-    });
+    const diarizationAutoChunking = isSpeakerDiarizationMode();
+    const chunkPreparation = diarizationAutoChunking
+      ? {
+          chunkMs: authoritativeDurationMs,
+          chunkingRequired: false,
+          chunks: [
+            {
+              index: 0,
+              audio,
+              filename,
+              mimeType,
+              durationMs: authoritativeDurationMs,
+              startMs: 0,
+              endMs: authoritativeDurationMs
+            }
+          ]
+        }
+      : await prepareAudioChunks({
+          audio,
+          filename,
+          mimeType,
+          durationMs: authoritativeDurationMs
+        });
+    const { chunks, chunkMs, chunkingRequired } = chunkPreparation;
+
+    const firstChunk = chunks[0];
+    if (!firstChunk) {
+      throw new Error('Audio chunk preparation returned no chunks.');
+    }
+
+    request.log.info(
+      {
+        chunkingRequired,
+        chunkCount: chunks.length,
+        chunkMs,
+        authoritativeDurationMs,
+        filename,
+        mimeType,
+        audioBytes: audio.length,
+        diarizationAutoChunking
+      },
+      'Audio transcription chunk decision'
+    );
+
+    if (chunkingRequired && chunks.length > 1) {
+      request.log.info(
+        {
+          chunkCount: chunks.length,
+          authoritativeDurationMs,
+          filename,
+          mimeType,
+          audioBytes: audio.length
+        },
+        'Processing long recording as transcription chunks'
+      );
+    }
+
+    const result = chunks.length === 1
+      ? await transcribeAndTranslate({
+          audio: firstChunk.audio,
+          filename: firstChunk.filename,
+          mimeType: firstChunk.mimeType,
+          durationMs: authoritativeDurationMs,
+          sourceLanguage,
+          targetLanguage
+        })
+      : await transcribeChunksAndTranslate({
+          chunks,
+          durationMs: authoritativeDurationMs,
+          sourceLanguage,
+          targetLanguage
+        });
 
     await completeCloudProcessing({
       userId: user.id,
@@ -314,7 +410,12 @@ app.post('/v1/audio/process', async (request, reply) => {
       models: result.models,
       cloudSessionId: cloudSession.id,
       idempotentReplay: false,
-      usage: await getCurrentMonthUsage(user.id)
+      usage: await getCurrentMonthUsage(user.id),
+      processing: {
+        chunkCount: result.usage.chunkCount ?? chunks.length,
+        chunkMs,
+        chunkingRequired
+      }
     });
   } catch (error) {
     request.log.error({ err: error }, 'Audio processing failed');
@@ -335,6 +436,18 @@ app.post('/v1/audio/process', async (request, reply) => {
     return sendKnownError(reply, error, 502, 'audio_processing_failed');
   }
 });
+
+function normalizeAudioMimeType(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (
+    normalized === 'audio/x-wav' ||
+    normalized === 'audio/wave' ||
+    normalized === 'audio/vnd.wave'
+  ) {
+    return 'audio/wav';
+  }
+  return normalized;
+}
 
 function sendKnownError(
   reply: FastifyReply,

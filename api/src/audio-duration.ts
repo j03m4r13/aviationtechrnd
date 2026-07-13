@@ -24,6 +24,10 @@ type DetermineAudioDurationArguments = {
   maxDurationMs: number;
 };
 
+const METADATA_CLIENT_TINY_RATIO = 0.05;
+const METADATA_TINY_DURATION_MS = 2_000;
+const CLIENT_LONG_DURATION_MS = 60_000;
+
 function normalizeSeconds(
   seconds: unknown,
   maxDurationMs: number
@@ -57,6 +61,20 @@ function normalizeClientDuration(
   }
 
   return Math.max(1, Math.round(durationMs));
+}
+
+function isImplausiblyTinyComparedWithClient(
+  measuredDurationMs: number,
+  clientDurationMs: number | null
+): boolean {
+  if (clientDurationMs === null || clientDurationMs < CLIENT_LONG_DURATION_MS) {
+    return false;
+  }
+
+  return (
+    measuredDurationMs <= METADATA_TINY_DURATION_MS ||
+    measuredDurationMs < clientDurationMs * METADATA_CLIENT_TINY_RATIO
+  );
 }
 
 async function probeFileWithFfprobe(filePath: string): Promise<number | null> {
@@ -190,6 +208,10 @@ export async function determineAudioDurationMs({
   maxDurationMs
 }: DetermineAudioDurationArguments): Promise<AudioDurationResult> {
   const diagnostics: string[] = [];
+  const fallbackDurationMs = normalizeClientDuration(
+    clientDurationMs,
+    maxDurationMs
+  );
 
   try {
     const metadata = await parseBuffer(
@@ -211,14 +233,20 @@ export async function determineAudioDurationMs({
     );
 
     if (durationMs !== null) {
-      return {
-        durationMs,
-        source: 'music-metadata',
-        diagnostics
-      };
+      if (isImplausiblyTinyComparedWithClient(durationMs, fallbackDurationMs)) {
+        diagnostics.push(
+          `music-metadata duration ${durationMs} ms was implausibly tiny compared with client duration ${fallbackDurationMs} ms.`
+        );
+      } else {
+        return {
+          durationMs,
+          source: 'music-metadata',
+          diagnostics
+        };
+      }
+    } else {
+      diagnostics.push('music-metadata returned no usable duration.');
     }
-
-    diagnostics.push('music-metadata returned no usable duration.');
   } catch (error) {
     diagnostics.push(
       `music-metadata failed: ${
@@ -232,14 +260,20 @@ export async function determineAudioDurationMs({
     const durationMs = normalizeSeconds(ffprobeSeconds, maxDurationMs);
 
     if (durationMs !== null) {
-      return {
-        durationMs,
-        source: 'ffprobe',
-        diagnostics
-      };
+      if (isImplausiblyTinyComparedWithClient(durationMs, fallbackDurationMs)) {
+        diagnostics.push(
+          `ffprobe duration ${durationMs} ms was implausibly tiny compared with client duration ${fallbackDurationMs} ms.`
+        );
+      } else {
+        return {
+          durationMs,
+          source: 'ffprobe',
+          diagnostics
+        };
+      }
+    } else {
+      diagnostics.push('ffprobe returned no usable duration.');
     }
-
-    diagnostics.push('ffprobe returned no usable duration.');
   } catch (error) {
     diagnostics.push(
       `ffprobe failed: ${
@@ -250,10 +284,6 @@ export async function determineAudioDurationMs({
 
   const allowClientFallback =
     process.env.ALLOW_CLIENT_DURATION_FALLBACK !== 'false';
-  const fallbackDurationMs = normalizeClientDuration(
-    clientDurationMs,
-    maxDurationMs
-  );
 
   if (allowClientFallback && fallbackDurationMs !== null) {
     diagnostics.push('Using validated client duration as a fallback.');

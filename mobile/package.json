@@ -7,7 +7,8 @@
     "start": "expo start --dev-client",
     "android": "expo run:android",
     "prebuild": "expo prebuild",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "callsign:setup": "bash modules/aviation-callsign-monitor/scripts/setup.sh"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
