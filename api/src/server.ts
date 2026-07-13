@@ -294,7 +294,8 @@ app.post('/v1/audio/process', async (request, reply) => {
       durationMs: authoritativeDurationMs
     });
 
-    if (chunks.length === 0) {
+    const firstChunk = chunks[0];
+    if (!firstChunk) {
       throw new Error('Audio chunk preparation returned no chunks.');
     }
 
@@ -311,7 +312,6 @@ app.post('/v1/audio/process', async (request, reply) => {
       );
     }
 
-    const firstChunk = chunks[0];
     const result = chunks.length === 1
       ? await transcribeAndTranslate({
           audio: firstChunk.audio,
