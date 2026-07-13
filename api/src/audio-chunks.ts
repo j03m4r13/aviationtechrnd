@@ -20,6 +20,12 @@ export type AudioTranscriptionChunk = {
   endMs: number;
 };
 
+export type AudioChunkPreparation = {
+  chunks: AudioTranscriptionChunk[];
+  chunkMs: number;
+  chunkingRequired: boolean;
+};
+
 type PrepareAudioChunksInput = {
   audio: Buffer;
   filename: string;
@@ -32,24 +38,28 @@ export async function prepareAudioChunks({
   filename,
   mimeType,
   durationMs
-}: PrepareAudioChunksInput): Promise<AudioTranscriptionChunk[]> {
+}: PrepareAudioChunksInput): Promise<AudioChunkPreparation> {
   const chunkMs = Number(process.env.AUDIO_TRANSCRIPTION_CHUNK_MS ?? DEFAULT_CHUNK_MS);
   if (!Number.isFinite(chunkMs) || chunkMs <= 0) {
     throw new Error('AUDIO_TRANSCRIPTION_CHUNK_MS must be a positive number.');
   }
 
   if (durationMs <= chunkMs) {
-    return [
-      {
-        index: 0,
-        audio,
-        filename,
-        mimeType,
-        durationMs,
-        startMs: 0,
-        endMs: durationMs
-      }
-    ];
+    return {
+      chunkMs,
+      chunkingRequired: false,
+      chunks: [
+        {
+          index: 0,
+          audio,
+          filename,
+          mimeType,
+          durationMs,
+          startMs: 0,
+          endMs: durationMs
+        }
+      ]
+    };
   }
 
   const ffmpegPath = process.env.FFMPEG_PATH ?? 'ffmpeg';
@@ -102,21 +112,25 @@ export async function prepareAudioChunks({
       throw new Error('ffmpeg did not create any audio chunks.');
     }
 
-    return Promise.all(
-      chunkNames.map(async (name, index) => {
-        const startMs = index * chunkMs;
-        const endMs = Math.min(durationMs, (index + 1) * chunkMs);
-        return {
-          index,
-          audio: await readFile(join(chunksDir, name)),
-          filename: name,
-          mimeType: 'audio/mp4',
-          durationMs: Math.max(1, endMs - startMs),
-          startMs,
-          endMs
-        };
-      })
-    );
+    return {
+      chunkMs,
+      chunkingRequired: true,
+      chunks: await Promise.all(
+        chunkNames.map(async (name, index) => {
+          const startMs = index * chunkMs;
+          const endMs = Math.min(durationMs, (index + 1) * chunkMs);
+          return {
+            index,
+            audio: await readFile(join(chunksDir, name)),
+            filename: name,
+            mimeType: 'audio/mp4',
+            durationMs: Math.max(1, endMs - startMs),
+            startMs,
+            endMs
+          };
+        })
+      )
+    };
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
     throw Object.assign(
