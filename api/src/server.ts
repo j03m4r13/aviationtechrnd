@@ -287,19 +287,33 @@ app.post('/v1/audio/process', async (request, reply) => {
       }
     }
 
-    const chunks = await prepareAudioChunks({
+    const chunkPreparation = await prepareAudioChunks({
       audio,
       filename,
       mimeType,
       durationMs: authoritativeDurationMs
     });
+    const { chunks, chunkMs, chunkingRequired } = chunkPreparation;
 
     const firstChunk = chunks[0];
     if (!firstChunk) {
       throw new Error('Audio chunk preparation returned no chunks.');
     }
 
-    if (chunks.length > 1) {
+    request.log.info(
+      {
+        chunkingRequired,
+        chunkCount: chunks.length,
+        chunkMs,
+        authoritativeDurationMs,
+        filename,
+        mimeType,
+        audioBytes: audio.length
+      },
+      'Audio transcription chunk decision'
+    );
+
+    if (chunkingRequired && chunks.length > 1) {
       request.log.info(
         {
           chunkCount: chunks.length,
@@ -352,7 +366,9 @@ app.post('/v1/audio/process', async (request, reply) => {
       idempotentReplay: false,
       usage: await getCurrentMonthUsage(user.id),
       processing: {
-        chunkCount: result.usage.chunkCount ?? chunks.length
+        chunkCount: result.usage.chunkCount ?? chunks.length,
+        chunkMs,
+        chunkingRequired
       }
     });
   } catch (error) {
@@ -383,9 +399,6 @@ function normalizeAudioMimeType(mimeType: string): string {
     normalized === 'audio/vnd.wave'
   ) {
     return 'audio/wav';
-  }
-  if (normalized === 'audio/m4a' || normalized === 'audio/x-m4a') {
-    return 'audio/mp4';
   }
   return normalized;
 }
