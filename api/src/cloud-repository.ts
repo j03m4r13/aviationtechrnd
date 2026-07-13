@@ -322,19 +322,19 @@ export async function softDeleteCloudSession(
   userId: string,
   sessionId: string
 ): Promise<boolean> {
-  const { error, count } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('recording_sessions')
     .update({ deleted_at: new Date().toISOString() })
     .eq('user_id', userId)
     .eq('id', sessionId)
     .is('deleted_at', null)
-    .select('id', { count: 'exact', head: true });
+    .select('id');
 
   if (error) {
     throw new Error(error.message);
   }
 
-  return (count ?? 0) > 0;
+  return (data ?? []).length > 0;
 }
 
 export async function getCurrentMonthUsage(userId: string): Promise<UsageSummary> {
@@ -360,9 +360,9 @@ export async function getCurrentMonthUsage(userId: string): Promise<UsageSummary
     0
   );
 
-  const { count, error: jobsError } = await supabaseAdmin
+  const { data: completedJobsData, error: jobsError } = await supabaseAdmin
     .from('processing_jobs')
-    .select('id', { count: 'exact', head: true })
+    .select('id')
     .eq('user_id', userId)
     .eq('status', 'completed')
     .gte('completed_at', start.toISOString())
@@ -375,6 +375,6 @@ export async function getCurrentMonthUsage(userId: string): Promise<UsageSummary
   return {
     month: start.toISOString().slice(0, 7),
     processedSeconds,
-    completedJobs: count ?? 0
+    completedJobs: (completedJobsData ?? []).length
   };
 }
