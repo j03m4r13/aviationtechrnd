@@ -186,9 +186,11 @@ async function transcribeAudioWithDiarization(input: {
   chunkStartMs: number;
 }): Promise<TranscriptionOutput> {
   const file = await toFile(input.audio, input.filename, { type: input.mimeType });
-  const createDiarizedTranscription = client.audio.transcriptions.create as unknown as (
-    request: Record<string, unknown>
-  ) => Promise<unknown>;
+  const createDiarizedTranscription = (
+    client.audio.transcriptions.create as unknown as (
+      request: Record<string, unknown>
+    ) => Promise<unknown>
+  ).bind(client.audio.transcriptions);
 
   const response = await createDiarizedTranscription({
     file,
