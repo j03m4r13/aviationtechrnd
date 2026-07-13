@@ -104,6 +104,15 @@ function fmtDuration(value: number | null): string {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
+function fmtElapsed(value: number | null): string {
+  if (!value) return '00:00:00';
+  const totalSeconds = Math.max(0, Math.floor(value / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
 function fmtPlayback(value: number | undefined): string {
   if (!value || Number.isNaN(value)) return '0:00';
   const totalSeconds = Math.max(0, Math.floor(value));
@@ -156,8 +165,23 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
   const [playingSessionId, setPlayingSessionId] = useState<string | null>(null);
   const [processingStates, setProcessingStates] = useState<Record<string, ProcessingState>>({});
   const [processingResults, setProcessingResults] = useState<Record<string, ProcessingResult>>({});
+  const [recordingStartedAtMs, setRecordingStartedAtMs] = useState<number | null>(null);
+  const [elapsedTickMs, setElapsedTickMs] = useState(Date.now());
   const player = useAudioPlayer(null);
   const playbackStatus = useAudioPlayerStatus(player);
+  const liveElapsedMs = status.active
+    ? Math.max(status.recordingDurationMs ?? 0, elapsedTickMs - (recordingStartedAtMs ?? elapsedTickMs))
+    : status.recordingDurationMs ?? 0;
+
+  function applyStatus(nextStatus: FlightSessionStatus) {
+    setStatus(nextStatus);
+    if (nextStatus.active) {
+      setRecordingStartedAtMs((current) => current ?? Date.now() - (nextStatus.recordingDurationMs ?? 0));
+      setElapsedTickMs(Date.now());
+    } else {
+      setRecordingStartedAtMs(null);
+    }
+  }
 
   async function refreshSessions() {
     const next = (await AviationCallsignMonitor.listFlightSessions(ownerUserId)) as FlightSessionSummary[];
@@ -191,7 +215,7 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
         AviationCallsignMonitor.getFlightSessionStatus(),
         refreshSessions()
       ]);
-      setStatus(nextStatus as FlightSessionStatus);
+      applyStatus(nextStatus as FlightSessionStatus);
     } catch (error) {
       Alert.alert('Unable to refresh recorder', error instanceof Error ? error.message : String(error));
     } finally {
@@ -221,7 +245,10 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
         Alert.alert('Microphone required', 'Enable microphone access first.');
         return;
       }
-      setStatus((await AviationCallsignMonitor.startFlightSession(ownerUserId)) as FlightSessionStatus);
+      const nextStatus = (await AviationCallsignMonitor.startFlightSession(ownerUserId)) as FlightSessionStatus;
+      setRecordingStartedAtMs(Date.now() - (nextStatus.recordingDurationMs ?? 0));
+      setElapsedTickMs(Date.now());
+      setStatus(nextStatus);
     } catch (error) {
       Alert.alert('Unable to start flight recording', error instanceof Error ? error.message : String(error));
     } finally {
@@ -232,7 +259,9 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
   async function stopSession() {
     try {
       setBusy(true);
-      setStatus((await AviationCallsignMonitor.stopFlightSession()) as FlightSessionStatus);
+      const nextStatus = (await AviationCallsignMonitor.stopFlightSession()) as FlightSessionStatus;
+      setStatus(nextStatus);
+      setRecordingStartedAtMs(null);
       await refreshSessions();
     } catch (error) {
       Alert.alert('Unable to stop flight recording', error instanceof Error ? error.message : String(error));
@@ -372,6 +401,13 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
     if (playbackStatus.didJustFinish) setPlayingSessionId(null);
   }, [playbackStatus.didJustFinish]);
 
+  useEffect(() => {
+    if (!status.active) return undefined;
+    setElapsedTickMs(Date.now());
+    const timer = setInterval(() => setElapsedTickMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [status.active]);
+
   return (
     <View style={styles.card}>
       <View style={styles.headerRow}>
@@ -384,7 +420,7 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
           </Text>
         </View>
         <View style={[styles.statusPill, status.active && styles.statusPillActive]}>
-          <Text style={[styles.statusPillText, status.active && styles.statusPillTextActive]}>{status.active ? 'REC' : 'READY'}</Text>
+          <Text style={[styles.statusPillText, status.active && styles.statusPillTextActive]}>{status.active ? `REC • ${fmtElapsed(liveElapsedMs)}` : 'READY'}</Text>
         </View>
       </View>
 
@@ -393,8 +429,12 @@ export function FlightRecorderPanel({ ownerUserId }: FlightRecorderPanelProps) {
           <View style={[styles.statusDot, status.active && styles.statusDotActive]} />
           <Text style={styles.statusText}>{status.active ? 'Recording and detecting callsigns' : 'Recorder stopped'}</Text>
         </View>
+        <View style={[styles.elapsedBox, status.active && styles.elapsedBoxActive]}>
+          <Text style={styles.elapsedLabel}>{status.active ? 'Elapsed recording time' : 'Current session duration'}</Text>
+          <Text style={[styles.elapsedTime, status.active && styles.elapsedTimeActive]}>{fmtElapsed(liveElapsedMs)}</Text>
+        </View>
         <Text style={styles.detail}>Current session: {status.sessionId ?? 'none'}</Text>
-        <Text style={styles.detail}>Events: {status.eventCount} · Duration: {fmtDuration(status.recordingDurationMs)} · Size: {fmtBytes(status.recordingAudioBytes)}</Text>
+        <Text style={styles.detail}>Events: {status.eventCount} · Duration: {fmtDuration(liveElapsedMs)} · Size: {fmtBytes(status.recordingAudioBytes)}</Text>
         <View style={styles.mainActions}>
           <Pressable disabled={busy || status.active} onPress={() => void startSession()} style={({ pressed }) => [styles.primaryButton, (pressed || busy || status.active) && styles.buttonPressed]}>
             <Text style={styles.primaryButtonText}>Start Flight Recording</Text>
@@ -528,6 +568,11 @@ const styles = StyleSheet.create({
   statusDot: { backgroundColor: '#64748b', borderRadius: 5, height: 10, width: 10 },
   statusDotActive: { backgroundColor: '#ef4444' },
   statusText: { color: '#e2e8f0', fontWeight: '800' },
+  elapsedBox: { backgroundColor: '#0b1220', borderColor: '#1e293b', borderRadius: 12, borderWidth: 1, gap: 4, padding: 12 },
+  elapsedBoxActive: { backgroundColor: '#1f1212', borderColor: '#7f1d1d' },
+  elapsedLabel: { color: '#94a3b8', fontSize: 11, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
+  elapsedTime: { color: '#e2e8f0', fontSize: 32, fontWeight: '900', letterSpacing: 1.2 },
+  elapsedTimeActive: { color: '#fecaca' },
   detail: { color: '#cbd5e1', fontSize: 12, lineHeight: 17 },
   mainActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
   primaryButton: { alignItems: 'center', backgroundColor: '#2563eb', borderRadius: 12, flex: 1, justifyContent: 'center', minHeight: 46, paddingHorizontal: 12 },
