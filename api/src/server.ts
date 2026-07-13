@@ -234,6 +234,18 @@ app.post('/v1/audio/process', async (request, reply) => {
 
     const cached = await getCompletedIdempotentResult(user.id, idempotencyKey);
     if (cached) {
+      request.log.info(
+        {
+          idempotencyKey,
+          localSessionId,
+          cloudSessionId: cached.id,
+          authoritativeDurationMs,
+          filename,
+          mimeType,
+          audioBytes: audio.length
+        },
+        'Returning cached idempotent audio result'
+      );
       return reply.send({
         transcript: cached.original_transcript ?? '',
         translation: cached.translated_transcript ?? '',
@@ -271,6 +283,18 @@ app.post('/v1/audio/process', async (request, reply) => {
     if (job.status === 'completed') {
       const replay = await getCompletedIdempotentResult(user.id, idempotencyKey);
       if (replay) {
+        request.log.info(
+          {
+            idempotencyKey,
+            localSessionId,
+            cloudSessionId: replay.id,
+            authoritativeDurationMs,
+            filename,
+            mimeType,
+            audioBytes: audio.length
+          },
+          'Returning completed processing job replay'
+        );
         return reply.send({
           transcript: replay.original_transcript ?? '',
           translation: replay.translated_transcript ?? '',
