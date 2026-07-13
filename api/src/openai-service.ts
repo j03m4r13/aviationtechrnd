@@ -208,7 +208,6 @@ async function transcribeAudioWithDiarization(input: {
     model: diarizationTranscriptionModel,
     response_format: 'diarized_json',
     chunking_strategy: 'auto',
-    prompt: aviationTranscriptionPrompt,
     ...(input.sourceLanguage !== 'auto' ? { language: input.sourceLanguage } : {})
   });
 
