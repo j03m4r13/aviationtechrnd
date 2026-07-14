@@ -2,23 +2,42 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
+  StatusBar as NativeStatusBar,
   StyleSheet,
   Text,
   View
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
+import AviationCallsignMonitor from './modules/aviation-callsign-monitor';
 import { AuthProvider, useAuth } from './src/auth/AuthProvider';
-import { AuthScreen } from './src/components/AuthScreen';
-import { AviationVoiceApp } from './src/AviationVoiceApp';
 import { CallsignMonitorApp } from './src/CallsignMonitorApp';
+import { AccountWorkspaceScreen } from './src/components/AccountWorkspaceScreen';
+import { AuthScreen } from './src/components/AuthScreen';
+import { PilotPayEstimatorScreen } from './src/components/PilotPayEstimatorScreen';
 
-type AviationTool = 'recorder' | 'callsign';
+type SuiteScreen = 'flight' | 'pay' | 'account';
+
+type NavigationItem = {
+  label: string;
+  value: SuiteScreen;
+};
+
+const NAVIGATION_ITEMS: NavigationItem[] = [
+  { label: 'Flight', value: 'flight' },
+  { label: 'Pay', value: 'pay' },
+  { label: 'Account', value: 'account' }
+];
+
+const topInset =
+  Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0;
 
 function AppGate() {
   const { loading, user, signOut } = useAuth();
-  const [tool, setTool] = useState<AviationTool>('recorder');
+  const [screen, setScreen] = useState<SuiteScreen>('flight');
+  const [checkingAudio, setCheckingAudio] = useState(false);
 
   if (loading) {
     return (
@@ -33,63 +52,84 @@ function AppGate() {
     return <AuthScreen />;
   }
 
-  function selectTool(nextTool: AviationTool) {
-    if (tool === nextTool) {
+  async function selectScreen(nextScreen: SuiteScreen) {
+    if (nextScreen === screen || checkingAudio) {
       return;
     }
 
-    if (tool === 'recorder' && nextTool === 'callsign') {
-      Alert.alert(
-        'Switch to callsign monitoring?',
-        'Stop any active recording first. The callsign monitor becomes the only microphone owner while it is open.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Switch tools', onPress: () => setTool(nextTool) }
-        ]
-      );
-      return;
+    if (screen === 'flight' && nextScreen !== 'flight') {
+      try {
+        setCheckingAudio(true);
+        const [monitorStatus, flightStatus] = await Promise.all([
+          AviationCallsignMonitor.getStatus(),
+          AviationCallsignMonitor.getFlightSessionStatus()
+        ]);
+
+        if (monitorStatus.monitoring || flightStatus.active) {
+          Alert.alert(
+            'Flight audio is still active',
+            monitorStatus.monitoring
+              ? 'Stop callsign monitoring before opening another screen.'
+              : 'Stop the active flight recording before opening another screen.'
+          );
+          return;
+        }
+      } catch (error) {
+        Alert.alert(
+          'Unable to verify microphone status',
+          error instanceof Error
+            ? error.message
+            : 'Check the flight-audio screen before switching.'
+        );
+        return;
+      } finally {
+        setCheckingAudio(false);
+      }
     }
 
-    setTool(nextTool);
+    setScreen(nextScreen);
   }
 
   return (
     <View style={styles.shell}>
-      <View style={styles.toolBar}>
-        <Pressable
-          onPress={() => selectTool('recorder')}
-          style={[styles.toolButton, tool === 'recorder' && styles.toolButtonActive]}
-        >
-          <Text
-            style={[
-              styles.toolButtonText,
-              tool === 'recorder' && styles.toolButtonTextActive
-            ]}
-          >
-            Recorder & Translation
-          </Text>
-        </Pressable>
+      <StatusBar style="light" />
 
-        <Pressable
-          onPress={() => selectTool('callsign')}
-          style={[styles.toolButton, tool === 'callsign' && styles.toolButtonActive]}
-        >
-          <Text
-            style={[
-              styles.toolButtonText,
-              tool === 'callsign' && styles.toolButtonTextActive
-            ]}
-          >
-            Callsign Monitor
-          </Text>
-        </Pressable>
+      <View style={styles.header}>
+        <View style={styles.brandRow}>
+          <View>
+            <Text style={styles.brandEyebrow}>AVIATION TOOLKIT</Text>
+            <Text style={styles.brandTitle}>Pilot Workspace</Text>
+          </View>
+          {checkingAudio ? <ActivityIndicator color="#85b7ff" size="small" /> : null}
+        </View>
+
+        <View style={styles.navigation}>
+          {NAVIGATION_ITEMS.map((item) => {
+            const active = item.value === screen;
+            return (
+              <Pressable
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                key={item.value}
+                onPress={() => void selectScreen(item.value)}
+                style={[styles.navButton, active && styles.navButtonActive]}
+              >
+                <Text style={[styles.navText, active && styles.navTextActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
 
-      <View style={styles.toolContent}>
-        {tool === 'recorder' ? (
-          <AviationVoiceApp user={user} signOut={signOut} />
+      <View style={styles.content}>
+        {screen === 'flight' ? (
+          <CallsignMonitorApp embedded ownerUserId={user.id} />
+        ) : screen === 'pay' ? (
+          <PilotPayEstimatorScreen />
         ) : (
-          <CallsignMonitorApp ownerUserId={user.id} />
+          <AccountWorkspaceScreen onSignOut={signOut} user={user} />
         )}
       </View>
     </View>
@@ -99,7 +139,6 @@ function AppGate() {
 export default function App() {
   return (
     <AuthProvider>
-      <StatusBar style="light" />
       <AppGate />
     </AuthProvider>
   );
@@ -121,39 +160,62 @@ const styles = StyleSheet.create({
     backgroundColor: '#0b0f16',
     flex: 1
   },
-  toolBar: {
-    backgroundColor: '#0f1622',
+  header: {
+    backgroundColor: '#0d131d',
     borderBottomColor: '#293347',
     borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: 6,
-    paddingBottom: 8,
+    gap: 9,
+    paddingBottom: 9,
     paddingHorizontal: 12,
-    paddingTop: 10
+    paddingTop: topInset + 8
   },
-  toolButton: {
+  brandRow: {
     alignItems: 'center',
-    borderColor: '#334155',
-    borderRadius: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2
+  },
+  brandEyebrow: {
+    color: '#6f91bd',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.2
+  },
+  brandTitle: {
+    color: '#f5f8fc',
+    fontSize: 18,
+    fontWeight: '800'
+  },
+  navigation: {
+    backgroundColor: '#151b26',
+    borderColor: '#293347',
+    borderRadius: 13,
     borderWidth: 1,
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4
+  },
+  navButton: {
+    alignItems: 'center',
+    borderRadius: 9,
     flex: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 10
+    minHeight: 39,
+    justifyContent: 'center',
+    paddingHorizontal: 7,
+    paddingVertical: 8
   },
-  toolButtonActive: {
-    backgroundColor: '#d6e7ff',
-    borderColor: '#d6e7ff'
+  navButtonActive: {
+    backgroundColor: '#d6e7ff'
   },
-  toolButtonText: {
-    color: '#9dacbf',
+  navText: {
+    color: '#98a6b9',
     fontSize: 12,
-    fontWeight: '800',
-    textAlign: 'center'
+    fontWeight: '800'
   },
-  toolButtonTextActive: {
+  navTextActive: {
     color: '#142033'
   },
-  toolContent: {
+  content: {
     flex: 1
   }
 });
