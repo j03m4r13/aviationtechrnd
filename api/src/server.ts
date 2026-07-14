@@ -17,6 +17,7 @@ import {
   upsertCloudSession
 } from './cloud-repository.js';
 import { transcribeAndTranslate } from './openai-service.js';
+import { tripDocumentRoutes } from './trip-document-route.js';
 
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const MAX_DURATION_MS = 4 * 60 * 60 * 1000;
@@ -44,6 +45,7 @@ await app.register(multipart, {
     fileSize: MAX_AUDIO_BYTES
   }
 });
+await app.register(tripDocumentRoutes);
 
 app.get('/health', async () => ({ ok: true }));
 
