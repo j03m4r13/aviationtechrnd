@@ -22,6 +22,7 @@ import {
   transcribeAndTranslate,
   transcribeChunksAndTranslate
 } from './openai-service.js';
+import { tripDocumentRoutes } from './trip-document-route.js';
 
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES ?? 64 * 1024 * 1024);
 const MAX_DURATION_MS = 4 * 60 * 60 * 1000;
@@ -52,6 +53,7 @@ await app.register(multipart, {
     fileSize: MAX_AUDIO_BYTES
   }
 });
+await app.register(tripDocumentRoutes);
 
 app.get('/health', async () => ({ ok: true }));
 
