@@ -31,7 +31,7 @@
         {
           "cameraPermission": "Allow Aviation Voice to photograph trip documents.",
           "photosPermission": "Allow Aviation Voice to select trip-document images.",
-          "microphonePermission": false
+          "microphonePermission": "Allow Aviation Voice to record cockpit audio."
         }
       ],
       [
