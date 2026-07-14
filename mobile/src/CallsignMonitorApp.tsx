@@ -19,22 +19,29 @@ const SHOW_DEVELOPER_TOOLS = false;
 
 type CallsignMonitorAppProps = {
   ownerUserId: string;
+  embedded?: boolean;
 };
 
-export function CallsignMonitorApp({ ownerUserId }: CallsignMonitorAppProps) {
+export function CallsignMonitorApp({
+  ownerUserId,
+  embedded = false
+}: CallsignMonitorAppProps) {
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          embedded && styles.contentEmbedded
+        ]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
           <Text style={styles.eyebrow}>HIGH-ACCURACY OFFLINE MODE · ANDROID</Text>
-          <Text style={styles.title}>Callsign Monitor</Text>
+          <Text style={styles.title}>Flight Audio</Text>
           <Text style={styles.subtitle}>
-            Vosk listens continuously while whisper.cpp checks every completed
-            transmission. All recognition stays on the phone.
+            Monitor your callsign, record the flight, and process saved audio for
+            transcription and translation from one workspace.
           </Text>
         </View>
 
@@ -70,6 +77,9 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     paddingHorizontal: 16,
     paddingTop: topInset
+  },
+  contentEmbedded: {
+    paddingTop: 18
   },
   hero: {
     gap: 6,
