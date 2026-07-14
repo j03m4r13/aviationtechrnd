@@ -1,13 +1,6 @@
 import type { User } from '@supabase/supabase-js';
 import { useCallback, useEffect, useState } from 'react';
-import {
-  Platform,
-  ScrollView,
-  StatusBar as NativeStatusBar,
-  StyleSheet,
-  Text,
-  View
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
 import {
@@ -23,9 +16,6 @@ type Props = {
   user: User;
   onSignOut: () => Promise<void>;
 };
-
-const topInset =
-  Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 12 : 22;
 
 export function AccountWorkspaceScreen({ user, onSignOut }: Props) {
   const [localCompletedSessions, setLocalCompletedSessions] = useState(0);
