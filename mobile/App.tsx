@@ -2,8 +2,8 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
 import { AuthProvider, useAuth } from './src/auth/AuthProvider';
+import { AviationSuiteApp } from './src/AviationSuiteApp';
 import { AuthScreen } from './src/components/AuthScreen';
-import { AviationVoiceApp } from './src/AviationVoiceApp';
 
 function AppGate() {
   const { loading, user, signOut } = useAuth();
@@ -17,7 +17,7 @@ function AppGate() {
     );
   }
 
-  return user ? <AviationVoiceApp user={user} signOut={signOut} /> : <AuthScreen />;
+  return user ? <AviationSuiteApp user={user} signOut={signOut} /> : <AuthScreen />;
 }
 
 export default function App() {
