@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 
 import { AviationVoiceApp } from './AviationVoiceApp';
-import { PilotPayCalculatorScreen } from './components/PilotPayCalculatorScreen';
+import { PilotPayEstimatorScreen } from './components/PilotPayEstimatorScreen';
 
 type ToolScreen = 'voice' | 'pay';
 
@@ -57,7 +57,7 @@ export function AviationSuiteApp({ user, signOut }: Props) {
         {tool === 'voice' ? (
           <AviationVoiceApp signOut={signOut} user={user} />
         ) : (
-          <PilotPayCalculatorScreen />
+          <PilotPayEstimatorScreen />
         )}
       </View>
     </View>
